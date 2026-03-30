@@ -30,3 +30,10 @@ jobs:
       - name: Run Unit Tests
         run: |
           make test
+
+      - name: Send coverage
+        env:
+          COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          go install github.com/mattn/goveralls@latest
+          goveralls -coverprofile=cover.out -service=github
