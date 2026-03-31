@@ -19,6 +19,7 @@ import (
 	"github.com/oracle/karpenter-provider-oci/pkg/oci"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacityreservation"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/npn"
+	"github.com/oracle/karpenter-provider-oci/pkg/utils"
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/awslabs/operatorpkg/status"
@@ -236,7 +237,14 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *corev1.NodeClaim)
 		lg.Info("Skipping NPN Object creation")
 	}
 
-	return createNodeClaimFromInstanceAndInstanceType(inst.Instance, selectedInstanceType), nil
+	nodeClaim = createNodeClaimFromInstanceAndInstanceType(inst.Instance, selectedInstanceType)
+	if nodeClaim.Annotations == nil {
+		nodeClaim.Annotations = make(map[string]string)
+	}
+
+	nodeClaim.Annotations[ociv1beta1.NodeClassHash] = utils.HashNodeClassSpec(nodeClass)
+	nodeClaim.Annotations[ociv1beta1.NodeClassHashVersion] = ociv1beta1.OCINodeClassHashVersion
+	return nodeClaim, nil
 }
 
 func (c *CloudProvider) createAndApplyNpnObject(ctx context.Context, instance *instance.InstanceInfo,
@@ -659,6 +667,13 @@ func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *corev1.NodeCla
 		}
 
 		desiredInstanceState.CapacityReservationId = &capRes.Ocid
+	}
+
+	// ------ 0. NodeClass static field hash not matching NodeClaim hash or hash version are not matching --------
+	staticFieldDriftReason := AreStaticFieldsDrifted(ctx, nodeClaim, nodeClass)
+	if staticFieldDriftReason != "" {
+		log.Info("static fields drift detected", "driftReason", staticFieldDriftReason)
+		return staticFieldDriftReason, nil
 	}
 
 	// ---- 1. INSTANCE DRIFT (CACHED, then REAL) ----

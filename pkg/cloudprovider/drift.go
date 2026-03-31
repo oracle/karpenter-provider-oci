@@ -15,9 +15,12 @@ import (
 	"github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/instance"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/instancetype"
-	ocicore "github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/samber/lo"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
+
+	ocicore "github.com/oracle/oci-go-sdk/v65/core"
+	corev1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
 const (
@@ -254,4 +257,35 @@ func isLaunchOptionMismatch(desired *ocicore.LaunchOptions, actual *ocicore.Laun
 
 	// IsPvEncryptionInTransitEnabled is deprecated so not checking it here
 	return false
+}
+
+func AreStaticFieldsDrifted(ctx context.Context, nodeClaim *corev1.NodeClaim,
+	nodeClass *v1beta1.OCINodeClass) cloudprovider.DriftReason {
+
+	nodeClassHash, foundNodeClassHash := nodeClass.Annotations[v1beta1.NodeClassHash]
+	nodeClassHashVersion, foundNodeClassHashVersion := nodeClass.Annotations[v1beta1.NodeClassHashVersion]
+	nodeClaimHash, foundNodeClaimHash := nodeClaim.Annotations[v1beta1.NodeClassHash]
+	nodeClaimHashVersion, foundNodeClaimHashVersion := nodeClaim.Annotations[v1beta1.NodeClassHashVersion]
+
+	if !foundNodeClassHash || !foundNodeClaimHash || !foundNodeClassHashVersion || !foundNodeClaimHashVersion {
+		return ""
+	}
+	// validate that the hash version for the OCINodeClass is the same as the NodeClaim before evaluating for static drift
+	if nodeClassHashVersion != nodeClaimHashVersion {
+		log.FromContext(ctx).Info("NodeClassVersionDrift",
+			"nodeClaim", nodeClaim.Name,
+			"nodeClassHashVersion", nodeClassHashVersion,
+			"nodeClaimHashVersion", nodeClaimHashVersion)
+		return "NodeClassVersionDrift"
+	}
+
+	if nodeClassHash != nodeClaimHash {
+		log.FromContext(ctx).Info("NodeClassStaticFieldDrift",
+			"nodeClaim", nodeClaim.Name,
+			"nodeClassHash", nodeClassHash,
+			"nodeClaimHash", nodeClaimHash)
+		return "NodeClassStaticFieldDrift"
+	}
+
+	return ""
 }

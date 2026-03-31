@@ -27,6 +27,7 @@ import (
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/network"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/npn"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/placement"
+	"github.com/oracle/karpenter-provider-oci/pkg/utils"
 	"github.com/oracle/oci-go-sdk/v65/common"
 	ocicore "github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/samber/lo"
@@ -120,7 +121,8 @@ var _ = Describe("CloudProvider Tests", func() {
 			crProvider, bsProvider, npnProvider, nil, fakes.NewDummyChannel()))
 	})
 
-	It("should create nodeclaim successfully", func() {
+	It("should create nodeclaim with nodeclass hash", func() {
+
 		nodeClassPtr := &ociTestNodeClass
 		ExpectApplied(ctx, k8sClient, nodeClassPtr)
 		ExpectObjectReconciled(ctx, k8sClient, ociNodeClassController, nodeClassPtr)
@@ -143,9 +145,10 @@ var _ = Describe("CloudProvider Tests", func() {
 			},
 		}
 		resultNodeClaim, err := cloudProvider.Create(ctx, nodeClaimPtr)
-		ExpectExists(ctx, k8sClient, nodeClassPtr)
+		nodeClassPtr = ExpectExists(ctx, k8sClient, nodeClassPtr)
+
 		Expect(err).ToNot(HaveOccurred())
-		Expect(resultNodeClaim).ToNot(BeNil())
+		Expect(resultNodeClaim.Annotations[v1beta1.NodeClassHash]).To(Equal(utils.HashNodeClassSpec(nodeClassPtr)))
 	})
 
 	It("should priority spot shape first according to price", func() {

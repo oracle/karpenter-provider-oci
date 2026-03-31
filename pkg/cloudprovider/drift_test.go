@@ -17,12 +17,16 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/fakes"
-	ocicore "github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/samber/lo"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
+
+	ocicore "github.com/oracle/oci-go-sdk/v65/core"
+	corev1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
 var _ = Describe("Drift Tests", func() {
+
 	It("should handle second vnic drift properly", func() {
 		testCases := []struct {
 			VnicAttachments     []*ocicore.VnicAttachment
@@ -353,6 +357,56 @@ var _ = Describe("Drift Tests", func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(result).To(Equal(cloudprovider.DriftReason("")))
 	})
+
+	It("should detect static field drift correctly with AreStaticFieldsDrifted", func() {
+		var (
+			hashValue1 = "hashval1"
+			hashValue2 = "hashval2"
+			hashVer1   = "v1"
+			hashVer2   = "v2"
+		)
+
+		ctx := context.TODO()
+
+		// Case: All hashes and versions match -> no drift
+		nodeClass := makeNodeClass(hashValue1, hashVer1, true, true)
+		nodeClaim := makeNodeClaim(hashValue1, hashVer1, true, true)
+		Expect(AreStaticFieldsDrifted(ctx, nodeClaim, nodeClass)).To(Equal(cloudprovider.DriftReason("")))
+
+		// Case: Hash versions differ -> version drift
+		nodeClass = makeNodeClass(hashValue1, hashVer2, true, true)
+		nodeClaim = makeNodeClaim(hashValue1, hashVer1, true, true)
+		Expect(AreStaticFieldsDrifted(ctx, nodeClaim, nodeClass)).
+			To(Equal(cloudprovider.DriftReason("NodeClassVersionDrift")))
+
+		// Case: Hashes differ but versions same -> static field drift
+		nodeClass = makeNodeClass(hashValue1, hashVer1, true, true)
+		nodeClaim = makeNodeClaim(hashValue2, hashVer1, true, true)
+		Expect(AreStaticFieldsDrifted(ctx, nodeClaim, nodeClass)).
+			To(Equal(cloudprovider.DriftReason("NodeClassStaticFieldDrift")))
+
+		nodeClass = makeNodeClass(hashValue2, hashVer2, true, true)
+		nodeClaim = makeNodeClaim(hashValue1, hashVer2, true, true)
+		Expect(AreStaticFieldsDrifted(ctx, nodeClaim, nodeClass)).
+			To(Equal(cloudprovider.DriftReason("NodeClassStaticFieldDrift")))
+
+		// Case: Any annotation missing -> no drift (empty string)
+		nodeClass = makeNodeClass(hashValue1, hashVer1, false, true) // class missing hash
+		nodeClaim = makeNodeClaim(hashValue1, hashVer1, true, true)
+		Expect(AreStaticFieldsDrifted(ctx, nodeClaim, nodeClass)).To(Equal(cloudprovider.DriftReason("")))
+
+		nodeClass = makeNodeClass(hashValue1, hashVer1, true, false) // class missing version
+		nodeClaim = makeNodeClaim(hashValue1, hashVer1, true, true)
+		Expect(AreStaticFieldsDrifted(ctx, nodeClaim, nodeClass)).To(Equal(cloudprovider.DriftReason("")))
+
+		nodeClass = makeNodeClass(hashValue1, hashVer1, true, true)
+		nodeClaim = makeNodeClaim(hashValue1, hashVer1, false, true) // claim missing hash
+		Expect(AreStaticFieldsDrifted(ctx, nodeClaim, nodeClass)).To(Equal(cloudprovider.DriftReason("")))
+
+		nodeClass = makeNodeClass(hashValue1, hashVer1, true, true)
+		nodeClaim = makeNodeClaim(hashValue1, hashVer1, true, false) // claim missing version
+		Expect(AreStaticFieldsDrifted(ctx, nodeClaim, nodeClass)).To(Equal(cloudprovider.DriftReason("")))
+	})
 })
 
 func createVnicAttachment(vnicOcid string, subnetId string) *ocicore.VnicAttachment {
@@ -381,4 +435,32 @@ var defaultLaunchOption = ocicore.LaunchOptions{
 	NetworkType:                     ocicore.LaunchOptionsNetworkTypeParavirtualized,
 	RemoteDataVolumeType:            ocicore.LaunchOptionsRemoteDataVolumeTypeParavirtualized,
 	IsConsistentVolumeNamingEnabled: lo.ToPtr(true),
+}
+
+func makeNodeClass(hash, hashVer string, addHash, addVer bool) *v1beta1.OCINodeClass {
+	nc := fakes.CreateBasicOciNodeClass()
+	nc.Annotations = map[string]string{}
+	if addHash {
+		nc.Annotations[v1beta1.NodeClassHash] = hash
+	}
+	if addVer {
+		nc.Annotations[v1beta1.NodeClassHashVersion] = hashVer
+	}
+	return &nc
+}
+
+func makeNodeClaim(hash, hashVer string, addHash, addVer bool) *corev1.NodeClaim {
+	nc := &corev1.NodeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{},
+		},
+	}
+	nc.Name = "test-nodeclaim"
+	if addHash {
+		nc.Annotations[v1beta1.NodeClassHash] = hash
+	}
+	if addVer {
+		nc.Annotations[v1beta1.NodeClassHashVersion] = hashVer
+	}
+	return nc
 }

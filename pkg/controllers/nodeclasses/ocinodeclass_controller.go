@@ -141,6 +141,23 @@ func (c *Controller) Reconcile(ctx context.Context, nodeClass *v1beta1.OCINodeCl
 	log.Info(fmt.Sprintf("post reconcile: %v", nodeClass))
 
 	if !equality.Semantic.DeepEqual(stored, nodeClass) {
+		newHash, foundNewHash := nodeClass.Annotations[v1beta1.NodeClassHash]
+		existingHash, foundExistingHash := stored.Annotations[v1beta1.NodeClassHash]
+
+		if (!foundExistingHash && foundNewHash) || (foundExistingHash && foundNewHash && newHash != existingHash) {
+			annotationPatchOnly := nodeClass.DeepCopy()
+			if err := c.Client.Patch(ctx, annotationPatchOnly,
+				client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{})); err != nil {
+				if errors.IsConflict(err) {
+					return reconcile.Result{Requeue: true}, nil
+				}
+				errs = multierr.Append(errs, client.IgnoreNotFound(err))
+			}
+
+			nodeClass.ResourceVersion = annotationPatchOnly.ResourceVersion
+			stored = annotationPatchOnly
+		}
+
 		// We use client.MergeFromWithOptimisticLock because patching a list with a JSON merge patch
 		// can cause races due to the fact that it fully replaces the list on a change
 		// Here, we are updating the status condition list

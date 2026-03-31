@@ -8,8 +8,11 @@
 package utils
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/require"
 )
 
@@ -81,4 +84,72 @@ func TestHashForMarshalError(t *testing.T) {
 	fn := func() {}
 	_, err = HashFor(fn)
 	require.Error(t, err)
+}
+
+func TestHashNodeClassSpec_StaticFieldsCloning(t *testing.T) {
+	// Prepare a nodeClass spec with both static and non-static fields
+	staticValue := "STATIC"
+	dynamicValue := "DYNAMIC"
+	dynamicValue2 := "DYNAMIC_CHANGED"
+	assignIPv6 := true
+	assignPub := true
+	ipv6Detail := &v1beta1.Ipv6AddressIpv6SubnetCidrPairDetails{SubnetCidr: "subnet-cidr"}
+	ipv6List := []*v1beta1.Ipv6AddressIpv6SubnetCidrPairDetails{ipv6Detail}
+	skipSrcDest := true
+	securityAttrs := map[string]map[string]string{"foo": {"bar": "baz"}}
+
+	primaryVnic := &v1beta1.SimpleVnicConfig{
+		AssignIpV6Ip:                         &assignIPv6,
+		AssignPublicIp:                       &assignPub,
+		Ipv6AddressIpv6SubnetCidrPairDetails: ipv6List,
+		SkipSourceDestCheck:                  &skipSrcDest,
+		SecurityAttributes:                   securityAttrs,
+		VnicDisplayName:                      &dynamicValue, // dynamic
+	}
+	secondaryVnic := &v1beta1.SecondaryVnicConfig{
+		SimpleVnicConfig:    *primaryVnic,
+		ApplicationResource: &staticValue,
+		IpCount:             lo.ToPtr(4),
+		NicIndex:            lo.ToPtr(2),
+	}
+	staticCompartmentID := staticValue
+	nodeClass := &v1beta1.OCINodeClass{
+		Spec: v1beta1.OCINodeClassSpec{
+			ShapeConfigs: []*v1beta1.ShapeConfig{
+				{
+					BaselineOcpuUtilization: nil,
+					Ocpus:                   lo.ToPtr(float32(2)),
+					MemoryInGbs:             lo.ToPtr(float32(1)),
+				},
+			},
+			NodeCompartmentId: &staticCompartmentID,
+			NetworkConfig: &v1beta1.NetworkConfig{
+				PrimaryVnicConfig:    primaryVnic,
+				SecondaryVnicConfigs: []*v1beta1.SecondaryVnicConfig{secondaryVnic},
+			},
+			Metadata:                map[string]string{"foo": "bar"},
+			FreeformTags:            map[string]string{"myTag": "myVal"},
+			DefinedTags:             map[string]map[string]string{"myNs": {"key": "val"}},
+			PreBootstrapInitScript:  &staticValue,
+			PostBootstrapInitScript: &staticValue,
+			SshAuthorizedKeys:       []string{"ssh-rsa AAA..."},
+		},
+	}
+
+	// Hash with all fields set
+	initialHash := HashNodeClassSpec(nodeClass)
+
+	// Mutate dynamic fields, verify hash does NOT change
+	nodeClass.Spec.NetworkConfig.PrimaryVnicConfig.VnicDisplayName = &dynamicValue2
+
+	hashAfterDynamicChanges := HashNodeClassSpec(nodeClass)
+	require.Equal(t, initialHash, hashAfterDynamicChanges,
+		fmt.Sprintf("Hash should not change when non-static (dynamic) fields changed; got changed from '%v' to '%v'",
+			initialHash, hashAfterDynamicChanges))
+
+	// Mutate a static field, verify hash DOES change
+	nodeClass.Spec.NodeCompartmentId = lo.ToPtr("DIFFERENT")
+	hashAfterStaticChange := HashNodeClassSpec(nodeClass)
+	require.NotEqual(t, initialHash, hashAfterStaticChange,
+		fmt.Sprintf("Hash must change when static field changes, but did not (still '%v')", initialHash))
 }

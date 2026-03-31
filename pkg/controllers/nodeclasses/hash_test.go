@@ -74,6 +74,9 @@ var _ = Describe("Hash Reconciler", func() {
 		nodeClassPtr = ExpectExists(ctx, k8sClient, nodeClassPtr)
 
 		Expect(nodeClassPtr).NotTo(BeNil())
+		Expect(nodeClassPtr.Annotations).NotTo(BeNil())
+		Expect(nodeClassPtr.Annotations[v1beta1.NodeClassHash]).NotTo(BeNil())
+		Expect(nodeClassPtr.Annotations[v1beta1.NodeClassHashVersion]).To(Equal(v1beta1.OCINodeClassHashVersion))
 	})
 
 	It("should not create hash if nodeClass not ready", func() {
