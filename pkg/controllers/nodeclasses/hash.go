@@ -11,6 +11,7 @@ import (
 	"context"
 
 	"github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
+	"github.com/oracle/karpenter-provider-oci/pkg/utils"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -18,25 +19,17 @@ type Hash struct {
 }
 
 func (h *Hash) Reconcile(ctx context.Context, nodeClass *v1beta1.OCINodeClass) (reconcile.Result, error) {
-	// if nodeClass.StatusConditions().Root().IsTrue() {
-	// var infs []interface{}
-	// infs = append(infs, nodeClass.Spec)
-	// infs = append(infs, nodeClass.Status.Volume)
-	// infs = append(infs, nodeClass.Status.Network)
-	//
-	// hash, err := utils.HashForMultiObjects(infs)
-	// if err != nil {
-	//	return reconcile.Result{
-	//		RequeueAfter: 5 * time.Minute,
-	//	}, nil
-	// }
-	//
-	// if nodeClass.Annotations == nil {
-	//	nodeClass.Annotations = make(map[string]string)
-	// }
-	//
-	// nodeClass.Annotations[v1beta1.NodeClassHash] = hash
-	// }
+	if nodeClass.StatusConditions().Root().IsTrue() {
+		// TODO may need to update nodeClaim hash here if NodeClassHashVersion is changed
+		hash := utils.HashNodeClassSpec(nodeClass)
+
+		if nodeClass.Annotations == nil {
+			nodeClass.Annotations = make(map[string]string)
+		}
+
+		nodeClass.Annotations[v1beta1.NodeClassHash] = hash
+		nodeClass.Annotations[v1beta1.NodeClassHashVersion] = v1beta1.OCINodeClassHashVersion
+	}
 
 	return reconcile.Result{}, nil
 }
