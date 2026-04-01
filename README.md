@@ -9,10 +9,10 @@ Karpenter helps improve utilization and control cost in Kubernetes by:
 - **Deprovisioning** nodes once they’re no longer needed
 - **Optimizing** the node fleet over time by consolidating workloads onto fewer or more cost-effective nodes with better utilization
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/oracle/karpenter-provider-oci)](https://goreportcard.com/report/github.com/oracle/karpenter-provider-oci)
 [![License](https://img.shields.io/badge/license-UPL%201.0-blue.svg)](https://oss.oracle.com/licenses/upl/)
 [![Release](https://img.shields.io/github/v/release/oracle/karpenter-provider-oci)](https://img.shields.io/github/v/release/oracle/karpenter-provider-oci)
 [![Coverage Status](https://coveralls.io/repos/github/oracle/karpenter-provider-oci/badge.svg?branch=main)](https://coveralls.io/github/oracle/karpenter-provider-oci?branch=main)
+[![Go Report Card](https://goreportcard.com/badge/github.com/oracle/karpenter-provider-oci)](https://goreportcard.com/report/github.com/oracle/karpenter-provider-oci)
 
 ## Installation
 
