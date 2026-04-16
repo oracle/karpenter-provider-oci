@@ -45,6 +45,10 @@ serviceMonitor:
   # See the Prometheus operator documentation for configurable fields https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/api.md#endpoint
   endpointConfig: {}
 
+service:
+  # -- Additional annotations for the Service.
+  annotations: {}
+
 # -- The number of old ReplicaSets to retain to allow rollback.
 revisionHistoryLimit: 10
 # -- Strategy for updating the pod.
