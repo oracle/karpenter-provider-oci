@@ -200,6 +200,22 @@ func TestCreateSecondaryVnicsNpnCustomObjectValidInput(t *testing.T) {
 		} else {
 			assert.Equal(t, int64(testMaxPods), result.Spec.MaxPodCount)
 
+			// Verify flat fields are populated for OKE NPN controller compatibility
+			assert.NotEmpty(t, result.Spec.PodSubnetIDs, "podSubnetIds should be populated")
+			assert.NotEmpty(t, result.Spec.IpFamilies, "ipFamilies should be populated")
+			for _, tc := range testCases {
+				assert.Contains(t, result.Spec.PodSubnetIDs, tc.testSubnetId)
+			}
+			expectedIpFamilies := lo.Map(ipFamilyTc.ipFamilies, func(f network.IpFamily, _ int) string {
+				return string(f)
+			})
+			assert.Equal(t, expectedIpFamilies, result.Spec.IpFamilies)
+			// testCases[2] has nsgIds ["nsg1", "nsg2", "nsg3"]
+			assert.NotEmpty(t, result.Spec.NetworkSecurityGroupIDs, "networkSecurityGroupIds should be populated")
+			for _, nsgId := range testCases[2].nsgIds {
+				assert.Contains(t, result.Spec.NetworkSecurityGroupIDs, nsgId)
+			}
+
 			for index, resultSecondaryVnic := range result.Spec.SecondaryVnics {
 				expectedValues := testCases[index]
 
@@ -436,5 +452,75 @@ func TestMaxPodSetting(t *testing.T) {
 
 		assert.NoError(t, err)
 		assert.Equal(t, tc.expect, result.Spec.MaxPodCount)
+
+		// Verify flat fields are populated
+		assert.Contains(t, result.Spec.PodSubnetIDs, testSubnetId)
+		assert.Equal(t, []string{"IPv4"}, result.Spec.IpFamilies)
 	}
+}
+
+func TestFlatFieldsDeduplication(t *testing.T) {
+	teardownTest := setupTest(t)
+	defer teardownTest(t)
+
+	// Two secondary VNICs sharing the same subnet but different NSGs
+	sharedSubnetId := "ocid1.subnet.shared"
+	nsg1 := "ocid1.nsg.1"
+	nsg2 := "ocid1.nsg.2"
+
+	secondaryVnicConfigs := []*ociv1beta1.SecondaryVnicConfig{
+		{
+			SimpleVnicConfig: ociv1beta1.SimpleVnicConfig{
+				SubnetAndNsgConfig: &ociv1beta1.SubnetAndNsgConfig{
+					SubnetConfig: &ociv1beta1.SubnetConfig{SubnetId: &sharedSubnetId},
+				},
+			},
+			IpCount: lo.ToPtr(16),
+		},
+		{
+			SimpleVnicConfig: ociv1beta1.SimpleVnicConfig{
+				SubnetAndNsgConfig: &ociv1beta1.SubnetAndNsgConfig{
+					SubnetConfig: &ociv1beta1.SubnetConfig{SubnetId: &sharedSubnetId},
+				},
+			},
+			IpCount: lo.ToPtr(16),
+		},
+	}
+
+	otherVnicSubnets := []*network.SubnetAndNsgs{
+		{
+			Subnet:                &ocicore.Subnet{Id: &sharedSubnetId},
+			NetworkSecurityGroups: NsgIdsToNetworkSecurityGroupObjects([]string{nsg1, nsg2}),
+		},
+		{
+			Subnet:                &ocicore.Subnet{Id: &sharedSubnetId},
+			NetworkSecurityGroups: NsgIdsToNetworkSecurityGroupObjects([]string{nsg1}),
+		},
+	}
+
+	// Test with dual-stack IP families
+	provider.ipFamilies = ipV6DualStack
+
+	result, err := provider.createNpnCustomObject(context.TODO(), "testName", "testInstanceId",
+		&ociv1beta1.NetworkConfig{SecondaryVnicConfigs: secondaryVnicConfigs},
+		&network.NetworkResolveResult{OtherVnicSubnets: otherVnicSubnets},
+		nil)
+
+	assert.NoError(t, err)
+
+	// Subnet IDs should be deduplicated
+	assert.Equal(t, []string{sharedSubnetId}, result.Spec.PodSubnetIDs,
+		"duplicate subnet IDs should be deduplicated")
+
+	// NSG IDs should be deduplicated across VNICs
+	assert.Len(t, result.Spec.NetworkSecurityGroupIDs, 2,
+		"NSG IDs should be deduplicated across VNICs")
+	assert.Contains(t, result.Spec.NetworkSecurityGroupIDs, nsg1)
+	assert.Contains(t, result.Spec.NetworkSecurityGroupIDs, nsg2)
+
+	// IP families should reflect provider config
+	assert.Equal(t, []string{"IPv4", "IPv6"}, result.Spec.IpFamilies)
+
+	// Secondary VNICs should still be populated (nested format preserved)
+	assert.Len(t, result.Spec.SecondaryVnics, 2)
 }

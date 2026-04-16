@@ -174,14 +174,37 @@ func (p *DefaultProvider) constructSecondaryVnicsNpnSpec(ctx context.Context,
 		}
 	}
 
+	// Populate flat fields for OKE NPN controller compatibility.
+	// The OKE NPN controller requires podSubnetIds, networkSecurityGroupIds,
+	// and ipFamilies at the top level to complete reconciliation.
+	podSubnetIds := lo.Uniq(lo.FilterMap(secondaryVnicsSpec, func(sv npnv1beta1.SecondaryVnic, _ int) (string, bool) {
+		if sv.CreateVnicDetails.SubnetId != nil {
+			return *sv.CreateVnicDetails.SubnetId, true
+		}
+		return "", false
+	}))
+
+	var allNsgIds []string
+	for _, sv := range secondaryVnicsSpec {
+		allNsgIds = append(allNsgIds, sv.CreateVnicDetails.NsgIds...)
+	}
+	allNsgIds = lo.Uniq(allNsgIds)
+
+	ipFamilyStrings := lo.Map(p.ipFamilies, func(f network.IpFamily, _ int) string {
+		return string(f)
+	})
+
 	log.FromContext(ctx).Info("Creating Secondary Npn Spec values",
 		"MaxPodCount", maxPods,
 		"SecondaryVnics", secondaryVnicsSpec)
 
 	npnSpec := &npnv1beta1.NativePodNetworkSpec{
-		ID:             instanceId,
-		MaxPodCount:    maxPods,
-		SecondaryVnics: secondaryVnicsSpec,
+		ID:                      instanceId,
+		MaxPodCount:             maxPods,
+		SecondaryVnics:          secondaryVnicsSpec,
+		PodSubnetIDs:            podSubnetIds,
+		NetworkSecurityGroupIDs: allNsgIds,
+		IpFamilies:              ipFamilyStrings,
 	}
 	return npnSpec, nil
 }
