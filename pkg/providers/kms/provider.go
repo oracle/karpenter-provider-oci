@@ -31,6 +31,7 @@ type Provider interface {
 type DefaultProvider struct {
 	clusterCompartmentOcid string
 	configProvider         common.ConfigurationProvider
+	rateLimiter            *oci.RateLimiter
 	kmsOcidCache           *cache.GetOrLoadCache[*ocikms.Key]
 	kmsFilterCache         *cache.GetOrLoadCache[[]*ocikms.KeySummary]
 	kmsClientCache         map[string]oci.KmsClient
@@ -38,11 +39,17 @@ type DefaultProvider struct {
 }
 
 func NewProvider(ctx context.Context,
-	clusterCompartmentOcid string, configProvider common.ConfigurationProvider) (*DefaultProvider, error) {
+	clusterCompartmentOcid string, configProvider common.ConfigurationProvider,
+	rateLimiter ...*oci.RateLimiter) (*DefaultProvider, error) {
+	var limiter *oci.RateLimiter
+	if len(rateLimiter) > 0 {
+		limiter = rateLimiter[0]
+	}
 
 	p := &DefaultProvider{
 		configProvider:         configProvider,
 		clusterCompartmentOcid: clusterCompartmentOcid,
+		rateLimiter:            limiter,
 		kmsOcidCache:           cache.NewDefaultGetOrLoadCache[*ocikms.Key](),
 		kmsFilterCache:         cache.NewDefaultGetOrLoadCache[[]*ocikms.KeySummary](),
 		kmsClientCache:         make(map[string]oci.KmsClient),
@@ -68,7 +75,7 @@ func (p *DefaultProvider) getKmsClient(endpoint string) (oci.KmsClient, error) {
 	if ok {
 		return c, nil
 	} else {
-		nc, err := oci.NewKmsClient(p.configProvider, endpoint)
+		nc, err := oci.NewKmsClient(p.configProvider, endpoint, p.rateLimiter)
 		if err != nil {
 			return nil, err
 		}

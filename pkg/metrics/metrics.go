@@ -121,7 +121,11 @@ func MeasureCallDuration(apiName string) func() time.Duration {
 
 func CountResponseStatus(apiName string, input interface{}) {
 	if ociResponse, ok := input.(common.OCIResponse); ok {
-		statusCode := ociResponse.HTTPResponse().StatusCode
+		httpResponse := ociResponse.HTTPResponse()
+		if httpResponse == nil {
+			return
+		}
+		statusCode := httpResponse.StatusCode
 
 		ExternalApiCallStatusCounter.Inc(
 			map[string]string{

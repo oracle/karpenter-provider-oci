@@ -41,6 +41,11 @@ type Options struct {
 	InstanceLaunchTimeoutBMMins            int
 	InstanceOperationPollIntervalInSeconds int
 	InstanceLaunchTimeOutFailOver          bool
+	DisableRateLimiter                     bool
+	RateLimitQPSRead                       float64
+	RateLimitBurstRead                     int
+	RateLimitQPSWrite                      float64
+	RateLimitBurstWrite                    int
 	setFlags                               map[string]bool
 	parsed                                 bool
 }
@@ -112,6 +117,16 @@ Example in a JSON format:
 		"Intervals in seconds to decide how often instance operation result is checked")
 	fs.BoolVar(&o.InstanceLaunchTimeOutFailOver, "instance-launch-timeout-failover", false,
 		"When instance launch timeout happens, fail over to next instance types")
+	fs.BoolVar(&o.DisableRateLimiter, "disable-rate-limiter", true,
+		"Disable the OCI client-side rate limiter")
+	fs.Float64Var(&o.RateLimitQPSRead, "rate-limit-qps-read", 0,
+		"Read QPS for the OCI client-side rate limiter. 0 uses the default")
+	fs.IntVar(&o.RateLimitBurstRead, "rate-limit-burst-read", 0,
+		"Read burst for the OCI client-side rate limiter. 0 uses the default")
+	fs.Float64Var(&o.RateLimitQPSWrite, "rate-limit-qps-write", 0,
+		"Write QPS for the OCI client-side rate limiter. 0 uses the default")
+	fs.IntVar(&o.RateLimitBurstWrite, "rate-limit-burst-write", 0,
+		"Write burst for the OCI client-side rate limiter. 0 uses the default")
 
 	fs.Var((*RepairPoliciesValue)(&o.RepairPolicies),
 		"repair-policies",
@@ -200,6 +215,18 @@ func (o *Options) Validate() error {
 
 	if o.InstanceLaunchTimeoutBMMins <= 0 {
 		return errors.New("delete-instance-timeout-bm-mins must be a positive integer")
+	}
+	if o.RateLimitQPSRead < 0 {
+		return errors.New("rate-limit-qps-read must be greater than or equal to 0")
+	}
+	if o.RateLimitBurstRead < 0 {
+		return errors.New("rate-limit-burst-read must be greater than or equal to 0")
+	}
+	if o.RateLimitQPSWrite < 0 {
+		return errors.New("rate-limit-qps-write must be greater than or equal to 0")
+	}
+	if o.RateLimitBurstWrite < 0 {
+		return errors.New("rate-limit-burst-write must be greater than or equal to 0")
 	}
 
 	return nil

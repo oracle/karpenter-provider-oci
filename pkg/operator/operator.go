@@ -108,10 +108,17 @@ func createOperator(ctx context.Context, coreOp *operator.Operator,
 
 	shapeMetaFile = valueOrDefault(shapeMetaFile, DefaultShapeMetafileCluster)
 	refreshInterval := time.Duration(ociOptions.ShapeMetaRefreshIntervalHours) * time.Hour
+	rateLimiter := oci.NewRateLimiter(ctx, &oci.RateLimiterConfig{
+		DisableRateLimiter:  ociOptions.DisableRateLimiter,
+		RateLimitQPSRead:    float32(ociOptions.RateLimitQPSRead),
+		RateLimitBurstRead:  ociOptions.RateLimitBurstRead,
+		RateLimitQPSWrite:   float32(ociOptions.RateLimitQPSWrite),
+		RateLimitBurstWrite: ociOptions.RateLimitBurstWrite,
+	})
 
 	ociClient := inputOciClient
 	if ociClient == nil {
-		ociClient = lo.Must(oci.NewClient(ctx, configProvider))
+		ociClient = lo.Must(oci.NewClient(ctx, configProvider, &rateLimiter))
 	}
 
 	capacityReservationProvider := capacityreservation.NewProvider(ctx, ociClient,
@@ -149,7 +156,7 @@ func createOperator(ctx context.Context, coreOp *operator.Operator,
 	imageProvider := lo.Must(image.NewProvider(ctx, clientSet, ociClient,
 		ociOptions.PreBakedImageCompartmentId, "", coreOp.Elected()))
 
-	kmsKeyProvider := lo.Must(kms.NewProvider(ctx, ociOptions.ClusterCompartmentId, configProvider))
+	kmsKeyProvider := lo.Must(kms.NewProvider(ctx, ociOptions.ClusterCompartmentId, configProvider, &rateLimiter))
 
 	blockStorageProvider := lo.Must(blockstorage.NewProvider(ctx, ociClient))
 

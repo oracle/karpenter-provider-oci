@@ -118,6 +118,19 @@ var _ = Describe("Test Operator Options", func() {
 				},
 				"",
 			},
+			{
+				&Options{
+					ClusterCompartmentId:          "testClusterCompartmentId",
+					VcnCompartmentId:              "testVcnCompartmentId",
+					PreBakedImageCompartmentId:    "testPreBakedImageCompartmentId",
+					ApiserverEndpoint:             "1.0.10.1",
+					ShapeMetaRefreshIntervalHours: 1,
+					InstanceLaunchTimeoutVMMins:   1,
+					InstanceLaunchTimeoutBMMins:   1,
+					RateLimitQPSRead:              -1,
+				},
+				"rate-limit-qps-read must be greater than or equal to 0",
+			},
 		}
 
 		for _, tc := range testCases {
@@ -155,6 +168,11 @@ var _ = Describe("Test Operator Options", func() {
 			"instance-launch-timeout-bm-mins",
 			"instance-operation-poll-interval-seconds",
 			"instance-launch-timeout-failover",
+			"disable-rate-limiter",
+			"rate-limit-qps-read",
+			"rate-limit-burst-read",
+			"rate-limit-qps-write",
+			"rate-limit-burst-write",
 			"repair-policies",
 			"pre-baked-image-compartment-id",
 			"shape-meta-file",
@@ -199,6 +217,15 @@ var _ = Describe("Test Operator Options", func() {
 			"--instance-operation-poll-interval-seconds",
 			"5",
 			"--instance-launch-timeout-failover", // "true"
+			"--disable-rate-limiter",
+			"--rate-limit-qps-read",
+			"21",
+			"--rate-limit-burst-read",
+			"6",
+			"--rate-limit-qps-write",
+			"11",
+			"--rate-limit-burst-write",
+			"3",
 			"--repair-policies",
 			"[{\"ConditionType\": \"Ready\",\"ConditionStatus\": \"False\",\"TolerationDuration\": 600000000000}]",
 			"--pre-baked-image-compartment-id",
@@ -233,6 +260,11 @@ var _ = Describe("Test Operator Options", func() {
 		Expect(o.InstanceLaunchTimeoutBMMins).To(Equal(30))
 		Expect(o.InstanceOperationPollIntervalInSeconds).To(Equal(5))
 		Expect(o.InstanceLaunchTimeOutFailOver).To(BeTrue())
+		Expect(o.DisableRateLimiter).To(BeTrue())
+		Expect(o.RateLimitQPSRead).To(Equal(float64(21)))
+		Expect(o.RateLimitBurstRead).To(Equal(6))
+		Expect(o.RateLimitQPSWrite).To(Equal(float64(11)))
+		Expect(o.RateLimitBurstWrite).To(Equal(3))
 		Expect(o.RepairPolicies).To(ContainElements(cloudprovider.RepairPolicy{
 			ConditionType:      corev1.NodeReady,
 			ConditionStatus:    corev1.ConditionFalse,
