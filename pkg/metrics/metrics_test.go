@@ -8,6 +8,7 @@
 package metrics
 
 import (
+	"net/http"
 	"strconv"
 	"testing"
 	"time"
@@ -15,6 +16,12 @@ import (
 	"github.com/oracle/karpenter-provider-oci/pkg/fakes"
 	"github.com/stretchr/testify/assert"
 )
+
+type nilHTTPResponse struct{}
+
+func (nilHTTPResponse) HTTPResponse() *http.Response {
+	return nil
+}
 
 func TestMeasureCallDuration(t *testing.T) {
 	testCases := []int{5, 10, 12, 21}
@@ -97,6 +104,12 @@ func TestCountResponseStatusTypeNotMatch(t *testing.T) {
 			ApiStatusCodeLabel: strconv.Itoa(200),
 		})
 	assert.False(t, ok)
+}
+
+func TestCountResponseStatusNilHTTPResponse(t *testing.T) {
+	assert.NotPanics(t, func() {
+		CountResponseStatus("testApiNilHTTPResponse", nilHTTPResponse{})
+	})
 }
 
 func TestRecordWorkRequestProcessTime(t *testing.T) {

@@ -144,6 +144,26 @@ spec:
             - name: APISERVER_ENDPOINT
               value: "{{ . }}"
             {{- end }}
+            {{- if hasKey .Values.settings.rateLimiter "disable" }}
+            - name: DISABLE_RATE_LIMITER
+              value: "{{ .Values.settings.rateLimiter.disable }}"
+            {{- end }}
+            {{- with .Values.settings.rateLimiter.qpsRead }}
+            - name: RATE_LIMIT_QPS_READ
+              value: "{{ . }}"
+            {{- end }}
+            {{- with .Values.settings.rateLimiter.burstRead }}
+            - name: RATE_LIMIT_BURST_READ
+              value: "{{ . }}"
+            {{- end }}
+            {{- with .Values.settings.rateLimiter.qpsWrite }}
+            - name: RATE_LIMIT_QPS_WRITE
+              value: "{{ . }}"
+            {{- end }}
+            {{- with .Values.settings.rateLimiter.burstWrite }}
+            - name: RATE_LIMIT_BURST_WRITE
+              value: "{{ . }}"
+            {{- end }}
             {{- with .Values.settings.flexibleShapeConfigs }}
             - name: FLEXIBLE_SHAPE_CONFIGS
               value: {{ . | toJson | quote }}

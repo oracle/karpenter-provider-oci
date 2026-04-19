@@ -86,25 +86,13 @@ func newComputeClient(config common.ConfigurationProvider) (*ocicore.ComputeClie
 	return &c, nil
 }
 
-func NewKmsClient(config common.ConfigurationProvider, endpoint string) (KmsClient, error) {
+func NewKmsClient(config common.ConfigurationProvider, endpoint string, rateLimiter *RateLimiter) (KmsClient, error) {
 	raw, err := ocikms.NewKmsManagementClientWithConfigurationProvider(config, endpoint)
 	if err != nil {
 		return nil, err
 	}
 	raw.Configuration.RetryPolicy = newRetryPolicy()
-	return &kmsDecoratedClient{inner: &raw}, nil
-}
-
-// kmsDecoratedClient adapts the OCI KMS client to add centralized logging.
-type kmsDecoratedClient struct {
-	inner *ocikms.KmsManagementClient
-}
-
-func (k *kmsDecoratedClient) GetKey(ctx context.Context,
-	req ocikms.GetKeyRequest) (ocikms.GetKeyResponse, error) {
-	return decorate(ctx, "GetKey", req, func() (ocikms.GetKeyResponse, error) {
-		return k.inner.GetKey(ctx, req)
-	})
+	return &kmsDecoratedClient{inner: &raw, limiter: normalizeRateLimiter(rateLimiter)}, nil
 }
 
 // newBlockStorageClient creates a BlockStorageClient with the default retry policy applied
@@ -169,7 +157,7 @@ func newClusterPlacementGroupClient(config common.ConfigurationProvider) (
 }
 
 // NewClient creates Client for all OCI services with centralized logging
-func NewClient(ctx context.Context, config common.ConfigurationProvider) (*Client, error) {
+func NewClient(ctx context.Context, config common.ConfigurationProvider, rateLimiter *RateLimiter) (*Client, error) {
 	compute, err := newComputeClient(config)
 	if err != nil {
 		return nil, err
@@ -200,7 +188,15 @@ func NewClient(ctx context.Context, config common.ConfigurationProvider) (*Clien
 		return nil, err
 	}
 
-	return newClient(compute, blockStorage, virtualNetwork, identity, workRequest, clusterPlacementGroup), nil
+	rl := normalizeRateLimiter(rateLimiter)
+	return newClient(
+		&rateLimitedComputeClient{inner: compute, limiter: rl},
+		&rateLimitedBlockStorageClient{inner: blockStorage, limiter: rl},
+		&rateLimitedVirtualNetworkClient{inner: virtualNetwork, limiter: rl},
+		&rateLimitedIdentityClient{inner: identity, limiter: rl},
+		&rateLimitedWorkRequestClient{inner: workRequest, limiter: rl},
+		&rateLimitedClusterPlacementGroupClient{inner: clusterPlacementGroup, limiter: rl},
+	), nil
 }
 
 // Client wraps OCI clients with centralized logging
@@ -214,9 +210,9 @@ type Client struct {
 }
 
 // newClient creates a new Client wrapper with the provided clients
-func newClient(compute *ocicore.ComputeClient, blockStorage *ocicore.BlockstorageClient,
-	virtualNetwork *ocicore.VirtualNetworkClient, identity *ociidentity.IdentityClient,
-	workRequest *ociwr.WorkRequestClient, clusterPlacementGroup *ocicpg.ClusterPlacementGroupsCPClient) *Client {
+func newClient(compute ComputeClient, blockStorage BlockStorageClient,
+	virtualNetwork VirtualNetworkClient, identity IdentityClient,
+	workRequest WorkRequestClient, clusterPlacementGroup ClusterPlacementGroupClient) *Client {
 	return &Client{
 		Compute:               compute,
 		BlockStorage:          blockStorage,
