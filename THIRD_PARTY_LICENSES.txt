@@ -120,6 +120,7 @@ Copyright 2014 Ernest Micklei. All rights reserved.
 Copyright 2015 Ernest Micklei. All rights reserved.
 Copyright 2018 Ernest Micklei. All rights reserved.
 Copyright 2021 Ernest Micklei. All rights reserved.
+Copyright 2025 Ernest Micklei. All rights reserved.
 
 --------------------------------- (separator) ----------------------------------
 
@@ -175,6 +176,7 @@ github.com/fsnotify/fsnotify
 SPDX:BSD-3-Clause--modified-by-Google
 
 == Copyright
+Copyright (c) 2013, Patrick Mezard
 Copyright © 2012 The Go Authors. All rights reserved.
 Copyright © fsnotify Authors. All rights reserved.
 
@@ -230,7 +232,51 @@ github.com/go-openapi/jsonpointer
 SPDX:Apache-2.0
 
 == Copyright
+Copyright (c) 2015-2025 go-swagger maintainers
 Copyright 2013 sigu-399 ( https://github.com/sigu-399 )
+Copyright 2015-2025 go-swagger maintainers
+
+== Notices
+Copyright 2015-2025 go-swagger maintainers
+
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
+This software library, github.com/go-openapi/jsonpointer, includes software developed
+by the go-swagger and go-openapi maintainers ("go-swagger maintainers").
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this software except in compliance with the License.
+
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0.
+
+This software is copied from, derived from, and inspired by other original software products.
+It ships with copies of other software which license terms are recalled below.
+
+The original software was authored on 25-02-2013 by sigu-399 (https://github.com/sigu-399, sigu.399@gmail.com).
+
+github.com/sigh-399/jsonpointer
+===========================
+
+// SPDX-FileCopyrightText: Copyright 2013 sigu-399 ( https://github.com/sigu-399 )
+// SPDX-License-Identifier: Apache-2.0
+
+Copyright 2013 sigu-399 ( https://github.com/sigu-399 )
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
 
 --------------------------------- (separator) ----------------------------------
 
@@ -241,7 +287,51 @@ github.com/go-openapi/jsonreference
 SPDX:Apache-2.0
 
 == Copyright
+Copyright (c) 2015-2025 go-swagger maintainers
 Copyright 2013 sigu-399 ( https://github.com/sigu-399 )
+Copyright 2015-2025 go-swagger maintainers
+
+== Notices
+Copyright 2015-2025 go-swagger maintainers
+
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
+This software library, github.com/go-openapi/jsonpointer, includes software developed
+by the go-swagger and go-openapi maintainers ("go-swagger maintainers").
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this software except in compliance with the License.
+
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0.
+
+This software is copied from, derived from, and inspired by other original software products.
+It ships with copies of other software which license terms are recalled below.
+
+The original software was authored on 25-02-2013 by sigu-399 (https://github.com/sigu-399, sigu.399@gmail.com).
+
+github.com/sigh-399/jsonpointer
+===========================
+
+// SPDX-FileCopyrightText: Copyright 2013 sigu-399 ( https://github.com/sigu-399 )
+// SPDX-License-Identifier: Apache-2.0
+
+Copyright 2013 sigu-399 ( https://github.com/sigu-399 )
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
 
 --------------------------------- (separator) ----------------------------------
 
@@ -252,7 +342,129 @@ github.com/go-openapi/swag
 SPDX:Apache-2.0
 
 == Copyright
-Copyright 2015 go-swagger maintainers
+Copyright 2015-2025 go-swagger maintainers
+
+--------------------------------- (separator) ----------------------------------
+
+== Dependency
+github.com/go-openapi/swag/cmdutils
+
+== License Type
+SPDX:Apache-2.0
+
+== Copyright
+Copyright 2015-2025 go-swagger maintainers
+
+--------------------------------- (separator) ----------------------------------
+
+== Dependency
+github.com/go-openapi/swag/conv
+
+== License Type
+SPDX:Apache-2.0
+
+== Copyright
+Copyright 2015-2025 go-swagger maintainers
+
+--------------------------------- (separator) ----------------------------------
+
+== Dependency
+github.com/go-openapi/swag/fileutils
+
+== License Type
+SPDX:Apache-2.0
+
+== Copyright
+Copyright 2015-2025 go-swagger maintainers
+
+--------------------------------- (separator) ----------------------------------
+
+== Dependency
+github.com/go-openapi/swag/jsonname
+
+== License Type
+SPDX:Apache-2.0
+
+== Copyright
+Copyright 2015-2025 go-swagger maintainers
+
+--------------------------------- (separator) ----------------------------------
+
+== Dependency
+github.com/go-openapi/swag/jsonutils
+
+== License Type
+SPDX:Apache-2.0
+
+== Copyright
+Copyright 2015-2025 go-swagger maintainers
+
+--------------------------------- (separator) ----------------------------------
+
+== Dependency
+github.com/go-openapi/swag/loading
+
+== License Type
+SPDX:Apache-2.0
+
+== Copyright
+Copyright 2015-2025 go-swagger maintainers
+
+--------------------------------- (separator) ----------------------------------
+
+== Dependency
+github.com/go-openapi/swag/mangling
+
+== License Type
+SPDX:Apache-2.0
+
+== Copyright
+Copyright (c) 2015-2025 go-swagger maintainers
+Copyright 2015-2025 go-swagger maintainers
+
+--------------------------------- (separator) ----------------------------------
+
+== Dependency
+github.com/go-openapi/swag/netutils
+
+== License Type
+SPDX:Apache-2.0
+
+== Copyright
+Copyright 2015-2025 go-swagger maintainers
+
+--------------------------------- (separator) ----------------------------------
+
+== Dependency
+github.com/go-openapi/swag/stringutils
+
+== License Type
+SPDX:Apache-2.0
+
+== Copyright
+Copyright 2015-2025 go-swagger maintainers
+
+--------------------------------- (separator) ----------------------------------
+
+== Dependency
+github.com/go-openapi/swag/typeutils
+
+== License Type
+SPDX:Apache-2.0
+
+== Copyright
+Copyright 2015-2025 go-swagger maintainers
+
+--------------------------------- (separator) ----------------------------------
+
+== Dependency
+github.com/go-openapi/swag/yamlutils
+
+== License Type
+SPDX:Apache-2.0
+
+== Copyright
+Copyright 2015-2025 go-swagger maintainers
 
 --------------------------------- (separator) ----------------------------------
 
@@ -302,33 +514,6 @@ Copyright 2018-2024 The Gofrs. All rights reserved.
 --------------------------------- (separator) ----------------------------------
 
 == Dependency
-github.com/gogo/protobuf
-
-== License Type
-SPDX:BSD-3-Clause--modified-by-Google
-
-== Copyright
-Copyright (c) 2013, The GoGo Authors. All rights reserved.
-Copyright (c) 2015, The GoGo Authors.  rights reserved.
-Copyright (c) 2015, The GoGo Authors. All rights reserved.
-Copyright (c) 2016, The GoGo Authors. All rights reserved.
-Copyright (c) 2017, The GoGo Authors. All rights reserved.
-Copyright (c) 2018, The GoGo Authors. All rights reserved.
-Copyright (c) 2019, The GoGo Authors. All rights reserved.
-Copyright 2010 The Go Authors.
-Copyright 2010 The Go Authors.  All rights reserved.
-Copyright 2011 The Go Authors.  All rights reserved.
-Copyright 2012 The Go Authors.  All rights reserved.
-Copyright 2013 The Go Authors.  All rights reserved.
-Copyright 2014 The Go Authors.  All rights reserved.
-Copyright 2015 The Go Authors.  All rights reserved.
-Copyright 2016 The Go Authors.  All rights reserved.
-Copyright 2017 The Go Authors.  All rights reserved.
-Copyright 2018 The Go Authors.  All rights reserved.
-
---------------------------------- (separator) ----------------------------------
-
-== Dependency
 github.com/google/btree
 
 == License Type
@@ -348,25 +533,10 @@ SPDX:Apache-2.0
 
 == Copyright
 Copyright 2017 Google LLC. All Rights Reserved.
-Copyright 2017-2022, Google LLC.
+Copyright 2017-2025, Google LLC.
 Copyright 2019 Google LLC. All Rights Reserved.
 Copyright 2020 Google LLC. All Rights Reserved.
 Copyright 2022 Google LLC. All Rights Reserved.
-
---------------------------------- (separator) ----------------------------------
-
-== Dependency
-github.com/google/go-cmp
-
-== License Type
-SPDX:BSD-3-Clause--modified-by-Google
-
-== Copyright
-Copyright (c) 2017 The Go Authors. All rights reserved.
-Copyright 2017, The Go Authors. All rights reserved.
-Copyright 2018, The Go Authors. All rights reserved.
-Copyright 2019, The Go Authors. All rights reserved.
-Copyright 2020, The Go Authors. All rights reserved.
 
 --------------------------------- (separator) ----------------------------------
 
@@ -387,17 +557,6 @@ Copyright 2023 Google Inc.  All rights reserved.
 --------------------------------- (separator) ----------------------------------
 
 == Dependency
-github.com/josharian/intern
-
-== License Type
-SPDX:MIT
-
-== Copyright
-Copyright (c) 2019 Josh Bleecher Snyder
-
---------------------------------- (separator) ----------------------------------
-
-== Dependency
 github.com/json-iterator/go
 
 == License Type
@@ -405,18 +564,6 @@ SPDX:MIT
 
 == Copyright
 Copyright (c) 2016 json-iterator
-
---------------------------------- (separator) ----------------------------------
-
-== Dependency
-github.com/mailru/easyjson
-
-== License Type
-SPDX:MIT
-
-== Copyright
-Copyright (c) 2009 The Go Authors. All rights reserved.
-Copyright (c) 2016 Mail.Ru Group
 
 --------------------------------- (separator) ----------------------------------
 
@@ -773,6 +920,7 @@ Copyright 2021 The Prometheus Authors
 Copyright 2022 The Prometheus Authors
 Copyright 2023 The Prometheus Authors
 Copyright 2024 The Prometheus Authors
+Copyright 2025 The Prometheus Authors
 
 == Notices
 Common libraries shared by Prometheus Go components.
@@ -904,8 +1052,8 @@ SPDX:MIT
 == Copyright
 Copyright (c) 2016 Uber Technologies, Inc.
 Copyright (c) 2016, 2017 Uber Technologies, Inc.
-Copyright (c) 2016-2017 Uber Technologies, Inc.
 Copyright (c) 2016-2022 Uber Technologies, Inc.
+Copyright (c) 2016-2024 Uber Technologies, Inc.
 Copyright (c) 2017 Uber Technologies, Inc.
 Copyright (c) 2018 Uber Technologies, Inc.
 Copyright (c) 2020 Uber Technologies, Inc.
@@ -923,6 +1071,89 @@ SPDX:Apache-2.0
 
 == Copyright
 Copyright (c) 2006 Kirill Simonov
+Copyright 2011-2016 Canonical Ltd.
+
+== Notices
+Copyright 2011-2016 Canonical Ltd.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+
+--------------------------------- (separator) ----------------------------------
+
+== Dependency
+go.yaml.in/yaml/v3
+
+== License Type
+=== MIT-3c91c172
+=== Apache-2.0
+
+This project is covered by two different licenses: MIT and Apache.
+
+#### MIT License ####
+
+The following files were ported to Go from C files of libyaml, and thus
+are still covered by their original MIT license, with the additional
+copyright staring in 2011 when the project was ported over:
+
+    apic.go emitterc.go parserc.go readerc.go scannerc.go
+    writerc.go yamlh.go yamlprivateh.go
+
+Copyright (c) 2006-2010 Kirill Simonov
+Copyright (c) 2006-2011 Kirill Simonov
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+### Apache License ###
+
+All the remaining project files are covered by the Apache license:
+
+Copyright (c) 2011-2019 Canonical Ltd
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+
+
+== Copyright
+Copyright (c) 2006-2010 Kirill Simonov
+Copyright (c) 2006-2011 Kirill Simonov
+Copyright (c) 2011-2019 Canonical Ltd
 Copyright 2011-2016 Canonical Ltd.
 
 == Notices
@@ -1755,6 +1986,7 @@ Copyright 2021 The Kubernetes Authors.
 Copyright 2022 The Kubernetes Authors.
 Copyright 2023 The Kubernetes Authors.
 Copyright 2024 The Kubernetes Authors.
+Copyright 2025 The Kubernetes Authors.
 
 --------------------------------- (separator) ----------------------------------
 
@@ -1849,6 +2081,26 @@ Copyright 2025 The Kubernetes Authors.
 --------------------------------- (separator) ----------------------------------
 
 == Dependency
+k8s.io/component-helpers
+
+== License Type
+SPDX:Apache-2.0
+
+== Copyright
+Copyright 2015 The Kubernetes Authors.
+Copyright 2016 The Kubernetes Authors.
+Copyright 2017 The Kubernetes Authors.
+Copyright 2018 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
+Copyright 2020 The Kubernetes Authors.
+Copyright 2021 The Kubernetes Authors.
+Copyright 2023 The Kubernetes Authors.
+Copyright 2024 The Kubernetes Authors.
+Copyright 2025 The Kubernetes Authors.
+
+--------------------------------- (separator) ----------------------------------
+
+== Dependency
 k8s.io/csi-translation-lib
 
 == License Type
@@ -1902,6 +2154,7 @@ Copyright 2021 The Kubernetes Authors.
 Copyright 2022 The Go Authors. All rights reserved.
 Copyright 2022 The Kubernetes Authors.
 Copyright 2023 The Kubernetes Authors.
+Copyright 2024 go-swagger maintainers
 Copyright 2025 The Kubernetes Authors.
 
 --------------------------------- (separator) ----------------------------------
@@ -1926,9 +2179,9 @@ Copyright 2018 The Kubernetes Authors.
 Copyright 2019 The Kubernetes Authors.
 Copyright 2020 The Kubernetes Authors.
 Copyright 2021 The Kubernetes Authors.
-Copyright 2022 The Kubernetes Authors.
 Copyright 2023 The Kubernetes Authors.
 Copyright 2024 The Kubernetes Authors.
+Copyright 2025 The Kubernetes Authors.
 
 --------------------------------- (separator) ----------------------------------
 
@@ -2289,7 +2542,7 @@ Submitted on behalf of a third-party: @disconnect3d (Disconnect3d)
 --------------------------------- (separator) ----------------------------------
 
 == Dependency
-sigs.k8s.io/structured-merge-diff/v4
+sigs.k8s.io/structured-merge-diff/v6
 
 == License Type
 SPDX:Apache-2.0
@@ -2299,6 +2552,7 @@ Copyright 2018 The Kubernetes Authors.
 Copyright 2019 The Kubernetes Authors.
 Copyright 2020 The Kubernetes Authors.
 Copyright 2023 The Kubernetes Authors.
+Copyright 2025 The Kubernetes Authors.
 
 --------------------------------- (separator) ----------------------------------
 
@@ -2886,4 +3140,4 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 === ATTRIBUTION-HELPER-GENERATED:
 === Attribution helper version: {Major:0 Minor:11 GitVersion:2a434e4d GitCommit:2a434e4d7eea22d4dfd2d1cf04909239d05562b1 GitTreeState:clean BuildDate:2024-12-16T20:09:06Z GoVersion:go1.25.1 Compiler:gc Platform:darwin/arm64}
-=== License file based on go.mod with md5 sum:  746ba3727b8314d7785288f6e90a59b3
+=== License file based on go.mod with md5 sum:  8ac47f2ac88d71793fbacd6d3a935f8c

@@ -1,6 +1,6 @@
 # karpenter
 
-![Version: 1.0.0](https://img.shields.io/badge/Version-1.0.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0](https://img.shields.io/badge/AppVersion-1.0.0-informational?style=flat-square)
+![Version: 1.0.0](https://img.shields.io/badge/Version-1.0.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: v1.0.0](https://img.shields.io/badge/AppVersion-v1.0.0-informational?style=flat-square)
 
 A Helm chart for Karpenter provider OCI
 
@@ -62,6 +62,7 @@ A Helm chart for Karpenter provider OCI
 | securityContext.readOnlyRootFilesystem | bool | `true` | Mount the root filesystem as read-only. |
 | securityContext.runAsNonRoot | bool | `true` | Run the container as a non-root user. |
 | securityContext.runAsUser | int | `1000` | User ID to run the controller container as. |
+| service.annotations | object | `{}` | Additional annotations for the Service. |
 | serviceAccount.annotations | object | `{}` | Annotations to add to the service account. |
 | serviceAccount.automount | bool | `true` | Specifies whether to automatically mount the service account token. |
 | serviceAccount.create | bool | `true` | Specifies whether a service account should be created. |
@@ -73,9 +74,11 @@ A Helm chart for Karpenter provider OCI
 | settings.batchIdleDuration | string | `"1s"` | The maximum amount of time with no new ending pods that if exceeded ends the current batching window. If pods arrive faster than this time, the batching window will be extended up to the maxDuration. If they arrive slower, the pods will be batched separately. |
 | settings.batchMaxDuration | string | `"10s"` | The maximum length of a batch window. The longer this is, the more pods we can consider for provisioning at one time which usually results in fewer but larger nodes. |
 | settings.clusterCompartmentId | string | `""` | [required] Cluster compartment OCID. |
-| settings.featureGates | object | `{"nodeRepair":false,"spotToSpotConsolidation":false}` | Feature Gate configuration values. Feature Gates will follow the same graduation process and requirements as feature gates in Kubernetes. More information here https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#feature-gates-for-alpha-or-beta-features |
+| settings.featureGates | object | `{"nodeOverlay":false,"nodeRepair":false,"spotToSpotConsolidation":false,"staticCapacity":false}` | Feature Gate configuration values. Feature Gates will follow the same graduation process and requirements as feature gates in Kubernetes. More information here https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#feature-gates-for-alpha-or-beta-features |
+| settings.featureGates.nodeOverlay | bool | `false` | nodeOverlay is ALPHA and is disabled by default. Setting this to true will enable nodeOverlay. |
 | settings.featureGates.nodeRepair | bool | `false` | nodeRepair is ALPHA and is disabled by default. Setting this to true will enable node repair. |
 | settings.featureGates.spotToSpotConsolidation | bool | `false` | spotToSpotConsolidation is ALPHA and is disabled by default. Setting this to true will enable spot replacement consolidation for both single and multi-node consolidation. |
+| settings.featureGates.staticCapacity | bool | `false` | staticCapacity is ALPHA and is disabled by default. Setting this to true will enable staticCapacity. |
 | settings.instanceTypeMetaConfigMapName | string | `"oci-instance-type-meta"` | ConfigMap that stores oci-compute price and shape information |
 | settings.ipFamilies | list | `["IPv4"]` | by default only IPv4, add IPv6 in needed |
 | settings.ociVcnIpNative | bool | `false` | set this to true for a cluster run with OciVcnIpNative |

@@ -13,6 +13,9 @@ settings:
   clusterCompartmentId: "VAR_COMPARTMENT_ID"
   # -- Cluster's VCN compartment OCID
   vcnCompartmentId: "VAR_COMPARTMENT_ID"
+  featureGates:
+    nodeOverlay: true
+    staticCapacity: true
   # -- set this to true for a cluster run with OciIpNativeCni
   ociVcnIpNative: true
   # -- by default only IPv4, add IPv6 in needed

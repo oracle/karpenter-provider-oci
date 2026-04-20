@@ -137,11 +137,9 @@ func TestProvider_PlaceInstance_PassesNodeClaimFaultDomainRequirement(t *testing
 		Spec: corev1.NodeClaimSpec{
 			Requirements: []corev1.NodeSelectorRequirementWithMinValues{
 				{
-					NodeSelectorRequirement: v1.NodeSelectorRequirement{
-						Key:      ociv1beta1.OciFaultDomain,
-						Operator: v1.NodeSelectorOpIn,
-						Values:   []string{"FAULT-DOMAIN-2"},
-					},
+					Key:      ociv1beta1.OciFaultDomain,
+					Operator: v1.NodeSelectorOpIn,
+					Values:   []string{"FAULT-DOMAIN-2"},
 				},
 			},
 		},

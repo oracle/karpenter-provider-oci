@@ -32,6 +32,8 @@ See [Installation](docs/guide/installation.md).
 - [Usage](docs/guide/usage.md)
   - [Use KPO to manage nodes with OCI flexible shapes and an OKE image](docs/guide/usage.md#use-kpo-to-manage-nodes-with-oci-flexible-shapes-and-an-oke-image)
   - [Ensure worker nodes using an OKE image are always updated to the latest image](docs/guide/usage.md#ensure-worker-nodes-using-an-oke-image-are-always-updated-to-the-latest-image)
+  - [Maintain a fixed number of worker nodes with static capacity](docs/guide/usage.md#maintain-a-fixed-number-of-worker-nodes-with-static-capacity)
+  - [Influence scheduling decisions with `NodeOverlay`](docs/guide/usage.md#influence-scheduling-decisions-with-nodeoverlay)
   - [Launch worker nodes for an OciIpNativeCNI cluster](docs/guide/usage.md#launch-worker-nodes-for-an-ociipnativecni-cluster)
 - [Advanced Use Cases](docs/guide/advanced-use-cases.md)
   - [Spot capacity (OCI preemptible)](docs/guide/advanced-use-cases.md#spot-capacity-oci-preemptible)

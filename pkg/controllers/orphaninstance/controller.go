@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/awslabs/operatorpkg/reconciler"
 	"github.com/awslabs/operatorpkg/singleton"
 	"github.com/samber/lo"
 	"go.uber.org/multierr"
@@ -24,7 +25,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
@@ -54,12 +54,12 @@ func NewController(context context.Context, kubeClient client.Client, clientSet 
 	}
 }
 
-func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
+func (c *Controller) Reconcile(ctx context.Context) (reconciler.Result, error) {
 	ctx = injection.WithControllerName(ctx, "orphaninstance")
 
 	nodeClaims, err := nodeclaimutils.ListManaged(ctx, c.kubeClient, c.cloudProvider)
 	if err != nil {
-		return reconcile.Result{}, err
+		return reconciler.Result{}, err
 	}
 
 	nameToNodeClaims := lo.SliceToMap(nodeClaims, func(item *corev1.NodeClaim) (string, *corev1.NodeClaim) {
@@ -76,7 +76,7 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 
 	cloudProviderNodeClaims, err := c.cloudProvider.List(ctx)
 	if err != nil {
-		return reconcile.Result{}, err
+		return reconciler.Result{}, err
 	}
 
 	cloudProviderNodeClaims = lo.Filter(cloudProviderNodeClaims, func(item *corev1.NodeClaim, _ int) bool {
@@ -123,14 +123,14 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	})
 
 	if err = multierr.Combine(errs...); err != nil {
-		return reconcile.Result{}, err
+		return reconciler.Result{}, err
 	} else {
 		requeueAfter := slowRequeueAfter
 		if fastRequeue {
 			requeueAfter = fastRequeueAfter
 		}
 
-		return reconcile.Result{RequeueAfter: requeueAfter}, nil
+		return reconciler.Result{RequeueAfter: requeueAfter}, nil
 	}
 }
 

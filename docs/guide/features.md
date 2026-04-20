@@ -1,8 +1,10 @@
 # Features
 
-- Implements the standard Karpenter cloud-provider interface (aligned with upstream **Karpenter v1.6.2**), enabling dynamic node scaling to meet workload scheduling demands and optimization requirements.
+- Implements the standard Karpenter cloud-provider interface (aligned with upstream **Karpenter v1.11.1**), enabling dynamic node scaling to meet workload scheduling demands and optimization requirements.
 - Supports drift detection to keep nodes launched by KPO up-to-date.
 - Provides opt-in and configurable node repair policies.
+- Supports upstream `NodeOverlay` when `settings.featureGates.nodeOverlay=true`, allowing operators to add scheduling-time capacity overlays or price adjustments for selected instance types and node pools.
+- Supports upstream static node pools when `settings.featureGates.staticCapacity=true`, enabling fixed-replica `NodePool.spec.replicas` workflows in addition to demand-driven provisioning.
 - Supports a wide range of OCI cloud-specific features through `OCINodeClass`, including:
     - Generic support of OCI compute VM and BM shapes and corresponding special scheduling labels
     - Multiple shape configs based on a flexible shape

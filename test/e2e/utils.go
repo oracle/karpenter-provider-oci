@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	karpenterv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	karpenterv1alpha1 "sigs.k8s.io/karpenter/pkg/apis/v1alpha1"
 )
 
 func karpenterNodePool(name string, nodeClassName string, config *KarpenterE2ETestConfig) *karpenterv1.NodePool {
@@ -34,35 +35,27 @@ func karpenterNodePool(name string, nodeClassName string, config *KarpenterE2ETe
 				Spec: karpenterv1.NodeClaimTemplateSpec{
 					Requirements: []karpenterv1.NodeSelectorRequirementWithMinValues{
 						{
-							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
-								Key:      corev1.LabelArchStable,
-								Operator: corev1.NodeSelectorOpIn,
-								Values:   config.NodePool.Architecture,
-							},
+							Key:       corev1.LabelArchStable,
+							Operator:  corev1.NodeSelectorOpIn,
+							Values:    config.NodePool.Architecture,
 							MinValues: nil,
 						},
 						{
-							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
-								Key:      corev1.LabelOSStable,
-								Operator: corev1.NodeSelectorOpIn,
-								Values:   config.NodePool.Os,
-							},
+							Key:       corev1.LabelOSStable,
+							Operator:  corev1.NodeSelectorOpIn,
+							Values:    config.NodePool.Os,
 							MinValues: nil,
 						},
 						{
-							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
-								Key:      karpenterv1.CapacityTypeLabelKey,
-								Operator: corev1.NodeSelectorOpIn,
-								Values:   config.NodePool.CapacityType,
-							},
+							Key:       karpenterv1.CapacityTypeLabelKey,
+							Operator:  corev1.NodeSelectorOpIn,
+							Values:    config.NodePool.CapacityType,
 							MinValues: nil,
 						},
 						{
-							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
-								Key:      corev1.LabelInstanceTypeStable,
-								Operator: corev1.NodeSelectorOpIn,
-								Values:   config.NodePool.InstanceTypes,
-							},
+							Key:       corev1.LabelInstanceTypeStable,
+							Operator:  corev1.NodeSelectorOpIn,
+							Values:    config.NodePool.InstanceTypes,
 							MinValues: nil,
 						},
 					},
@@ -93,6 +86,97 @@ func karpenterNodePool(name string, nodeClassName string, config *KarpenterE2ETe
 				ConsolidateAfter: karpenterv1.NillableDuration{
 					Duration: &second,
 				},
+				ConsolidationPolicy: karpenterv1.ConsolidationPolicyWhenEmptyOrUnderutilized,
+			},
+		},
+	}
+}
+
+func nodeOverlay(config *KarpenterE2ETestConfig) *karpenterv1alpha1.NodeOverlay {
+	return &karpenterv1alpha1.NodeOverlay{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: config.NodeOverlayTest.Name,
+		},
+		Spec: karpenterv1alpha1.NodeOverlaySpec{
+			Requirements: []karpenterv1alpha1.NodeSelectorRequirement{
+				{
+					Key:      NodePoolLabel,
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{config.NodePool.Name},
+				},
+				{
+					Key:      ociv1beta1.OciInstanceShape,
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{config.NodeOverlayTest.PreferredShape},
+				},
+			},
+			PriceAdjustment: lo.ToPtr(config.NodeOverlayTest.PriceAdjustment),
+			Weight:          lo.ToPtr(int32(100)),
+		},
+	}
+}
+
+func staticKarpenterNodePool(config *KarpenterE2ETestConfig) *karpenterv1.NodePool {
+	staticInstanceTypes := config.StaticCapacityTest.InstanceTypes
+	if len(staticInstanceTypes) == 0 {
+		staticInstanceTypes = config.NodePool.InstanceTypes
+	}
+
+	return &karpenterv1.NodePool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: config.StaticCapacityTest.NodePoolName,
+		},
+		Spec: karpenterv1.NodePoolSpec{
+			Replicas: lo.ToPtr(config.StaticCapacityTest.InitialReplicas),
+			Template: karpenterv1.NodeClaimTemplate{
+				Spec: karpenterv1.NodeClaimTemplateSpec{
+					Requirements: []karpenterv1.NodeSelectorRequirementWithMinValues{
+						{
+							Key:      corev1.LabelArchStable,
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   config.NodePool.Architecture,
+						},
+						{
+							Key:      corev1.LabelOSStable,
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   config.NodePool.Os,
+						},
+						{
+							Key:      karpenterv1.CapacityTypeLabelKey,
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   config.NodePool.CapacityType,
+						},
+						{
+							Key:      corev1.LabelInstanceTypeStable,
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   staticInstanceTypes,
+						},
+					},
+					Taints: []corev1.Taint{
+						{
+							Key:    instancetype.PreemptibleTaintKey,
+							Effect: corev1.TaintEffectNoSchedule,
+							Value:  "present",
+						},
+						{
+							Key:    instancetype.NvidiaGpuTaintKey,
+							Effect: corev1.TaintEffectNoSchedule,
+							Value:  "present",
+						},
+						{
+							Key:    instancetype.AmdGpuTaintKey,
+							Effect: corev1.TaintEffectNoSchedule,
+							Value:  "present",
+						},
+					},
+					NodeClassRef: &karpenterv1.NodeClassReference{
+						Kind:  "OCINodeClass",
+						Name:  config.OCINodeClass.Name,
+						Group: "oci.oraclecloud.com",
+					},
+				},
+			},
+			Disruption: karpenterv1.Disruption{
 				ConsolidationPolicy: karpenterv1.ConsolidationPolicyWhenEmptyOrUnderutilized,
 			},
 		},

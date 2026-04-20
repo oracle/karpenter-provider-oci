@@ -135,11 +135,9 @@ var _ = Describe("CloudProvider Tests", func() {
 				},
 				Requirements: []v1.NodeSelectorRequirementWithMinValues{
 					{
-						NodeSelectorRequirement: corev1.NodeSelectorRequirement{
-							Key:      corev1.LabelInstanceTypeStable,
-							Operator: corev1.NodeSelectorOpIn,
-							Values:   []string{testShape},
-						},
+						Key:      corev1.LabelInstanceTypeStable,
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{testShape},
 					},
 				},
 			},

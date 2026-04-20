@@ -99,6 +99,20 @@ type DriftTestData struct {
 	DriftKmsKeyName              string
 }
 
+type NodeOverlayTestConfig struct {
+	Name            string
+	CandidateShapes []string
+	PreferredShape  string
+	PriceAdjustment string
+}
+
+type StaticCapacityTestConfig struct {
+	NodePoolName    string
+	InitialReplicas int64
+	ScaledReplicas  int64
+	InstanceTypes   []string
+}
+
 type KarpenterE2ETestConfig struct {
 	// Oci Profile used to run the test
 	OciAuthMethodForTest string
@@ -107,12 +121,14 @@ type KarpenterE2ETestConfig struct {
 	// Namespace for karpenter and related resource deployment
 	Namespace string
 	// CompartmentID for network resources
-	CompartmentID  string
-	NodePool       NodePoolConfig
-	OCINodeClass   OCINodeClassConfig
-	TestDeployment TestDeploymentConfig
-	DriftTestData  DriftTestData
-	OciVcnIpNative bool
+	CompartmentID      string
+	NodePool           NodePoolConfig
+	OCINodeClass       OCINodeClassConfig
+	TestDeployment     TestDeploymentConfig
+	NodeOverlayTest    NodeOverlayTestConfig
+	StaticCapacityTest StaticCapacityTestConfig
+	DriftTestData      DriftTestData
+	OciVcnIpNative     bool
 }
 
 type SecondVnicConfig struct {

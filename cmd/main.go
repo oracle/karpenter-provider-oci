@@ -17,6 +17,7 @@ import (
 	"github.com/oracle/karpenter-provider-oci/pkg/operator"
 	"github.com/oracle/karpenter-provider-oci/pkg/operator/options"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider/metrics"
+	"sigs.k8s.io/karpenter/pkg/cloudprovider/overlay"
 	corecontrollers "sigs.k8s.io/karpenter/pkg/controllers"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	coreoperator "sigs.k8s.io/karpenter/pkg/operator"
@@ -65,7 +66,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	cloudProvider := metrics.Decorate(ociCloudProvider)
+	overlayUndecoratedCloudProvider := metrics.Decorate(ociCloudProvider)
+	cloudProvider := overlay.Decorate(overlayUndecoratedCloudProvider, op.GetClient(), op.InstanceTypeStore)
+	clusterState := state.NewCluster(op.Clock, op.GetClient(), cloudProvider)
 
 	op.WithControllers(ctx, corecontrollers.NewControllers(
 		ctx,
@@ -73,8 +76,10 @@ func main() {
 		op.Clock,
 		op.GetClient(),
 		op.EventRecorder,
-		ociCloudProvider,
-		state.NewCluster(op.Clock, op.GetClient(), cloudProvider),
+		cloudProvider,
+		overlayUndecoratedCloudProvider,
+		clusterState,
+		op.InstanceTypeStore,
 	)...).
 		WithControllers(ctx, controllers.NewControllers(
 			ctx,

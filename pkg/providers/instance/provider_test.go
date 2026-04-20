@@ -252,8 +252,7 @@ func TestProvider_DecideCapacityType(t *testing.T) {
 			name:        "spot when compatible offering exists",
 			isBurstable: false,
 			claimReqs: []corev1.NodeSelectorRequirementWithMinValues{
-				{NodeSelectorRequirement: v1.NodeSelectorRequirement{Key: corev1.CapacityTypeLabelKey,
-					Operator: v1.NodeSelectorOpIn, Values: []string{corev1.CapacityTypeSpot}}},
+				{Key: corev1.CapacityTypeLabelKey, Operator: v1.NodeSelectorOpIn, Values: []string{corev1.CapacityTypeSpot}},
 			},
 			offerings: cloudprovider.Offerings{makeOffering(corev1.CapacityTypeSpot)},
 			want:      corev1.CapacityTypeSpot,
@@ -262,8 +261,7 @@ func TestProvider_DecideCapacityType(t *testing.T) {
 			name:        "on-demand when burstable",
 			isBurstable: true,
 			claimReqs: []corev1.NodeSelectorRequirementWithMinValues{
-				{NodeSelectorRequirement: v1.NodeSelectorRequirement{Key: corev1.CapacityTypeLabelKey,
-					Operator: v1.NodeSelectorOpIn, Values: []string{corev1.CapacityTypeSpot}}},
+				{Key: corev1.CapacityTypeLabelKey, Operator: v1.NodeSelectorOpIn, Values: []string{corev1.CapacityTypeSpot}},
 			},
 			offerings: cloudprovider.Offerings{makeOffering(corev1.CapacityTypeSpot)},
 			want:      corev1.CapacityTypeOnDemand,
@@ -279,8 +277,7 @@ func TestProvider_DecideCapacityType(t *testing.T) {
 			name:        "on-demand when no compatible offering",
 			isBurstable: false,
 			claimReqs: []corev1.NodeSelectorRequirementWithMinValues{
-				{NodeSelectorRequirement: v1.NodeSelectorRequirement{Key: corev1.CapacityTypeLabelKey,
-					Operator: v1.NodeSelectorOpIn, Values: []string{corev1.CapacityTypeSpot}}},
+				{Key: corev1.CapacityTypeLabelKey, Operator: v1.NodeSelectorOpIn, Values: []string{corev1.CapacityTypeSpot}},
 			},
 			offerings: cloudprovider.Offerings{makeOffering(corev1.CapacityTypeOnDemand)},
 			want:      corev1.CapacityTypeOnDemand,
@@ -730,8 +727,7 @@ func TestProvider_LaunchInstance_RequestConstruction(t *testing.T) {
 		claim := baseClaim.DeepCopy()
 		// require spot
 		claim.Spec.Requirements = []corev1.NodeSelectorRequirementWithMinValues{
-			{NodeSelectorRequirement: v1.NodeSelectorRequirement{
-				Key: corev1.CapacityTypeLabelKey, Operator: v1.NodeSelectorOpIn, Values: []string{corev1.CapacityTypeSpot}}},
+			{Key: corev1.CapacityTypeLabelKey, Operator: v1.NodeSelectorOpIn, Values: []string{corev1.CapacityTypeSpot}},
 		}
 		it := &instancetype.OciInstanceType{Shape: "VM.Standard.E4.Flex"}
 		it.Offerings = cloudprovider.Offerings{makeOfferingWithCapType(corev1.CapacityTypeSpot)}
@@ -745,8 +741,7 @@ func TestProvider_LaunchInstance_RequestConstruction(t *testing.T) {
 	t.Run("non-flexible should not set shape config", func(t *testing.T) {
 		claim := baseClaim.DeepCopy()
 		claim.Spec.Requirements = []corev1.NodeSelectorRequirementWithMinValues{
-			{NodeSelectorRequirement: v1.NodeSelectorRequirement{
-				Key: corev1.CapacityTypeLabelKey, Operator: v1.NodeSelectorOpIn, Values: []string{corev1.CapacityTypeOnDemand}}},
+			{Key: corev1.CapacityTypeLabelKey, Operator: v1.NodeSelectorOpIn, Values: []string{corev1.CapacityTypeOnDemand}},
 		}
 		it := &instancetype.OciInstanceType{Shape: "VM.Standard2.1"}
 		it.Offerings = cloudprovider.Offerings{makeOfferingWithCapType(corev1.CapacityTypeOnDemand)}
@@ -760,8 +755,7 @@ func TestProvider_LaunchInstance_RequestConstruction(t *testing.T) {
 	t.Run("flexible should set shape config", func(t *testing.T) {
 		claim := baseClaim.DeepCopy()
 		claim.Spec.Requirements = []corev1.NodeSelectorRequirementWithMinValues{
-			{NodeSelectorRequirement: v1.NodeSelectorRequirement{
-				Key: corev1.CapacityTypeLabelKey, Operator: v1.NodeSelectorOpIn, Values: []string{corev1.CapacityTypeOnDemand}}},
+			{Key: corev1.CapacityTypeLabelKey, Operator: v1.NodeSelectorOpIn, Values: []string{corev1.CapacityTypeOnDemand}},
 		}
 		ocpu := float32(1)
 		memoryInGbs := float32(16)
@@ -789,8 +783,7 @@ func TestProvider_LaunchInstance_RequestConstruction(t *testing.T) {
 		claim := baseClaim.DeepCopy()
 		// still require spot, but burstable cannot be preemptible
 		claim.Spec.Requirements = []corev1.NodeSelectorRequirementWithMinValues{
-			{NodeSelectorRequirement: v1.NodeSelectorRequirement{
-				Key: corev1.CapacityTypeLabelKey, Operator: v1.NodeSelectorOpIn, Values: []string{corev1.CapacityTypeSpot}}},
+			{Key: corev1.CapacityTypeLabelKey, Operator: v1.NodeSelectorOpIn, Values: []string{corev1.CapacityTypeSpot}},
 		}
 		it := &instancetype.OciInstanceType{Shape: "VM.Standard.E4.Flex",
 			BaselineOcpuUtilization: lo.ToPtr(ociv1beta1.BASELINE_1_2)}

@@ -262,6 +262,12 @@ settings:
     # -- nodeRepair is ALPHA and is disabled by default.
     # Setting this to true will enable node repair.
     nodeRepair: false
+    # -- nodeOverlay is ALPHA and is disabled by default.
+    # Setting this to true will enable nodeOverlay.
+    nodeOverlay: false
+    # -- staticCapacity is ALPHA and is disabled by default.
+    # Setting this to true will enable staticCapacity.
+    staticCapacity: false
 
 #  flexibleShapeConfigs: []
 #    - ocpus: 4

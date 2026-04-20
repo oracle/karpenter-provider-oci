@@ -93,6 +93,25 @@
     "CPUReq": "1",
     "Replicas": 3
   },
+  "NodeOverlayTest": {
+    "Name": "prefer-standard224",
+    "CandidateShapes": [
+      "VM.Standard2.1",
+      "VM.Standard2.24"
+    ],
+    "PreferredShape": "VM.Standard2.24",
+    "PriceAdjustment": "-99%"
+  },
+  "StaticCapacityTest": {
+    "NodePoolName": "test-static-nodepool",
+    "InitialReplicas": 1,
+    "ScaledReplicas": 2,
+    "InstanceTypes": [
+      "VM.Standard2.8",
+      "VM.Standard2.16",
+      "VM.Standard2.4"
+    ]
+  },
   "DriftTestData": {
     "DriftImageId": "VAR_DRIFT_IMAGE_ID",
     "DriftImageDisplayName": "VAR_DRIFT_IMAGE_DISPLAY_NAME",

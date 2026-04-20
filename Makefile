@@ -4,13 +4,14 @@ GIT_SHA?=$(shell git describe --dirty --always)
 TAG_PREFIX=v0.0.1
 VERSION=$(TAG_PREFIX)-$(GIT_SHA)-$(BUILD_NUM)
 IMG ?= $(REG)/karpenter-provider-oci:$(VERSION)
+export GOTOOLCHAIN ?= go1.26.1
 CGO_ENABLED?=0
 BUILDOPTS:=-v
 GOOS ?= linux
 ARCH ?= amd64
 
 MOD_DIRS = $(shell find . -name go.mod -type f ! -path "./test/*" | xargs dirname)
-KARPENTER_CORE_DIR = $(shell go list -m -f '{{ .Dir }}' sigs.k8s.io/karpenter)
+KARPENTER_CRD_SOURCE_DIR = vendor/sigs.k8s.io/karpenter/pkg/apis/crds
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -51,7 +52,7 @@ help: ## Display this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
 ##@ Development
-verify: toolchain tidy download fmt gogen docs-gen-api docs-gen-helm addlicense-apply addlicense-check test ## Verify code. Includes dependencies, linting, formatting, etc
+verify: toolchain tidy download fmt sync-karpenter-crds gogen docs-gen-api docs-gen-helm addlicense-apply addlicense-check test ## Verify code. Includes dependencies, linting, formatting, etc
 
 	$(foreach dir,$(MOD_DIRS),cd $(dir) && golangci-lint run $(newline))
 	@git diff --quiet ||\
@@ -75,6 +76,13 @@ addlicense-apply: ## Add UPL header to files (excludes vendor/bin)
 .PHONY: gogen
 gogen: controller-gen ## Run go generate with local tools on PATH (generates CRDs, etc.)
 	PATH="$(LOCALBIN):$$PATH" go generate -skip="./npn/..." ./...
+
+.PHONY: sync-karpenter-crds
+sync-karpenter-crds: ## Copy upstream Karpenter CRDs into pkg/apis/crds
+	test -d "$(KARPENTER_CRD_SOURCE_DIR)"
+	cp "$(KARPENTER_CRD_SOURCE_DIR)/karpenter.sh_nodepools.yaml" pkg/apis/crds/karpenter.sh_nodepools.yaml
+	cp "$(KARPENTER_CRD_SOURCE_DIR)/karpenter.sh_nodeclaims.yaml" pkg/apis/crds/karpenter.sh_nodeclaims.yaml
+	cp "$(KARPENTER_CRD_SOURCE_DIR)/karpenter.sh_nodeoverlays.yaml" pkg/apis/crds/karpenter.sh_nodeoverlays.yaml
 
 tidy: ## Recursively "go mod tidy" on all directories where go.mod exists
 	$(foreach dir,$(MOD_DIRS),cd $(dir) && go mod tidy $(newline))

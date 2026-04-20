@@ -49,6 +49,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 	karpenterv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	karpenterv1alpha1 "sigs.k8s.io/karpenter/pkg/apis/v1alpha1"
 )
 
 func init() {
@@ -62,6 +63,8 @@ const (
 	PodScheduleTimeout      = 2 * time.Minute
 	ResourceCreationTimeout = 2 * time.Minute
 	NodePoolLabel           = "karpenter.sh/nodepool"
+	ReadyConditionType      = "Ready"
+	TrueConditionStatus     = "True"
 	TrueStr                 = "true"
 )
 
@@ -141,6 +144,19 @@ func (s *E2ETestSuite) createNodePool() error {
 	return s.ctrlClient.Create(s.ctx, nodePool)
 }
 
+func (s *E2ETestSuite) createNodeOverlay() error {
+	overlay := nodeOverlay(s.testConfig)
+	s.t.Logf("Creating NodeOverlay %s", overlay.Name)
+	return s.ctrlClient.Create(s.ctx, overlay)
+}
+
+func (s *E2ETestSuite) deleteNodeOverlay() error {
+	s.t.Logf("Deleting NodeOverlay %s", s.testConfig.NodeOverlayTest.Name)
+	return s.deleteClusterScopedByName(s.testConfig.NodeOverlayTest.Name, func() client.Object {
+		return &karpenterv1alpha1.NodeOverlay{}
+	})
+}
+
 // deleteOCINodeClass removes the OCINodeClass.
 func (s *E2ETestSuite) deleteOCINodeClass() error {
 	s.t.Logf("Deleting OCINodeClass %s", s.testConfig.OCINodeClass.Name)
@@ -199,6 +215,20 @@ func (s *E2ETestSuite) teardown() {
 
 	s.ensureAllNodeClaimDeleted()
 
+	if s.testConfig.NodeOverlayTest.Name != "" {
+		if err := s.deleteNodeOverlay(); err != nil && !apierrors.IsNotFound(err) {
+			s.t.Logf("Error deleting NodeOverlay: %v", err)
+		}
+	}
+
+	if s.testConfig.StaticCapacityTest.NodePoolName != "" {
+		if err := s.deleteClusterScopedByName(s.testConfig.StaticCapacityTest.NodePoolName, func() client.Object {
+			return &karpenterv1.NodePool{}
+		}); err != nil && !apierrors.IsNotFound(err) {
+			s.t.Logf("Error deleting static NodePool: %v", err)
+		}
+	}
+
 	if err := s.deleteNodePool(); err != nil && !apierrors.IsNotFound(err) {
 		s.t.Logf("Error deleting NodePool: %v", err)
 	}
@@ -221,6 +251,20 @@ func (s *E2ETestSuite) setup() {
 	// Pre-clean any existing resources from previous runs (delete only if they exist)
 	if err := s.deleteDeployment(); err != nil && !apierrors.IsNotFound(err) {
 		s.t.Logf("Warning: failed to delete existing test Deployment: %v", err)
+	}
+
+	if s.testConfig.NodeOverlayTest.Name != "" {
+		if err := s.deleteNodeOverlay(); err != nil && !apierrors.IsNotFound(err) {
+			s.t.Logf("Warning: failed to delete existing NodeOverlay: %v", err)
+		}
+	}
+
+	if s.testConfig.StaticCapacityTest.NodePoolName != "" {
+		if err := s.deleteClusterScopedByName(s.testConfig.StaticCapacityTest.NodePoolName, func() client.Object {
+			return &karpenterv1.NodePool{}
+		}); err != nil && !apierrors.IsNotFound(err) {
+			s.t.Logf("Warning: failed to delete existing static NodePool: %v", err)
+		}
 	}
 
 	// Ensure all NodeClaims for the test NodePool are deleted before proceeding
@@ -289,8 +333,10 @@ func TestKarpenterE2ENpn(t *testing.T) {
 
 	t.Run("EndToEndFlow", func(t *testing.T) {
 		s.TestScaleUp()
+		s.TestNodeOverlay()
 		s.TestNpnDriftDetection()
 		s.TestScaleDown()
+		s.TestStaticCapacity()
 	})
 }
 
@@ -328,6 +374,12 @@ func createE2ETest(t *testing.T, kubeConfigEnvVar string, testConfigFile string)
 		&karpenterv1.NodePoolList{},
 		&karpenterv1.NodeClaim{},
 		&karpenterv1.NodeClaimList{},
+	)
+	gvAlpha := schema.GroupVersion{Group: "karpenter.sh", Version: "v1alpha1"}
+	metav1.AddToGroupVersion(scheme, gvAlpha)
+	scheme.AddKnownTypes(gvAlpha,
+		&karpenterv1alpha1.NodeOverlay{},
+		&karpenterv1alpha1.NodeOverlayList{},
 	)
 
 	// Initialize Kubernetes client
@@ -383,23 +435,112 @@ func createE2ETest(t *testing.T, kubeConfigEnvVar string, testConfigFile string)
 }
 
 func (s *E2ETestSuite) TestScaleUp() {
-	s.t.Log("Start Scaleup testing")
-	s.ensureDeploymentReplicas(s.testConfig.TestDeployment.Name, s.testConfig.Namespace,
-		s.testConfig.TestDeployment.Replicas)
+	s.t.Run("ScaleUp", func(t *testing.T) {
+		t.Log("Start Scaleup testing")
+		s.ensureDeploymentReplicas(s.testConfig.TestDeployment.Name, s.testConfig.Namespace,
+			s.testConfig.TestDeployment.Replicas)
 
-	err := s.waitAndVerifyNodes(s.verifyScaleup, "")
-	require.NoError(s.t, err, "Node don't came up correctly for scaleup test")
-	testConfig := s.testConfig.OCINodeClass
-	s.verifyNodeClaim(s.testConfig.NodePool.Name, karpenterv1.CapacityTypeOnDemand, testConfig.ImageId)
-	err = s.checkPodsReady(s.testConfig.TestDeployment.Name, int(s.testConfig.TestDeployment.Replicas))
-	require.NoError(s.t, err, "All pods should be running after scaleup test")
-	nodeClass, err := s.GetOciNodeClass(s.testConfig.OCINodeClass.Name)
-	require.NoError(s.t, err, "should be able to get nodeclass")
-	s.verifyOciNodeClassStatusConditions(nodeClass, expectedConditions)
-	s.verifyOciNodeClassStatusNetwork(nodeClass, testConfig.NsgName, testConfig.Nsgs[0],
-		testConfig.SubnetName, testConfig.SubnetID)
-	s.verifyOciNodeClassStatusVolume(nodeClass, testConfig.KmsKey, testConfig.KmsKeyName)
-	s.t.Log("Scaleup test successful")
+		err := s.waitAndVerifyNodes(s.verifyScaleup, "")
+		require.NoError(t, err, "Node don't came up correctly for scaleup test")
+		testConfig := s.testConfig.OCINodeClass
+		s.verifyNodeClaim(s.testConfig.NodePool.Name, karpenterv1.CapacityTypeOnDemand, testConfig.ImageId)
+		err = s.checkPodsReady(s.testConfig.TestDeployment.Name, int(s.testConfig.TestDeployment.Replicas))
+		require.NoError(t, err, "All pods should be running after scaleup test")
+		nodeClass, err := s.GetOciNodeClass(s.testConfig.OCINodeClass.Name)
+		require.NoError(t, err, "should be able to get nodeclass")
+		s.verifyOciNodeClassStatusConditions(nodeClass, expectedConditions)
+		s.verifyOciNodeClassStatusNetwork(nodeClass, testConfig.NsgName, testConfig.Nsgs[0],
+			testConfig.SubnetName, testConfig.SubnetID)
+		s.verifyOciNodeClassStatusVolume(nodeClass, testConfig.KmsKey, testConfig.KmsKeyName)
+		t.Log("Scaleup test successful")
+	})
+}
+
+func (s *E2ETestSuite) TestNodeOverlay() {
+	s.t.Run("NodeOverlay", func(t *testing.T) {
+		t.Log("Start NodeOverlay testing")
+		t.Logf("NodeOverlay config: name=%s candidateShapes=%v preferredShape=%s priceAdjustment=%s",
+			s.testConfig.NodeOverlayTest.Name,
+			s.testConfig.NodeOverlayTest.CandidateShapes,
+			s.testConfig.NodeOverlayTest.PreferredShape,
+			s.testConfig.NodeOverlayTest.PriceAdjustment)
+
+		mainNodePool := &karpenterv1.NodePool{}
+		require.NoError(t, s.ctrlClient.Get(s.ctx, client.ObjectKey{Name: s.testConfig.NodePool.Name}, mainNodePool),
+			"should be able to get main nodepool")
+		originalRequirements := append([]karpenterv1.NodeSelectorRequirementWithMinValues(nil),
+			mainNodePool.Spec.Template.Spec.Requirements...)
+
+		t.Log("Scaling workload down and deleting existing NodeClaims before applying NodeOverlay")
+		s.ensureDeploymentReplicas(s.testConfig.TestDeployment.Name, s.testConfig.Namespace, 0)
+		s.ensureAllNodeClaimDeleted()
+
+		t.Logf("Patching NodePool %s requirements to candidate shapes %v",
+			s.testConfig.NodePool.Name, s.testConfig.NodeOverlayTest.CandidateShapes)
+		require.NoError(t, s.PatchNodePoolRequirements(
+			mainNodePool,
+			[]string{corev1.LabelInstanceTypeStable, ociv1beta1.OciInstanceShape},
+			map[string][]string{ociv1beta1.OciInstanceShape: s.testConfig.NodeOverlayTest.CandidateShapes},
+		), "failed to patch nodepool for nodeoverlay test")
+
+		t.Logf("Creating NodeOverlay %s and waiting for Ready", s.testConfig.NodeOverlayTest.Name)
+		require.NoError(t, s.createNodeOverlay(), "failed to create nodeoverlay")
+		require.NoError(t, wait.PollUntilContextTimeout(s.ctx, PollInterval, ResourceCreationTimeout, true,
+			func(context.Context) (bool, error) {
+				overlay := &karpenterv1alpha1.NodeOverlay{}
+				if err := s.ctrlClient.Get(s.ctx, client.ObjectKey{Name: s.testConfig.NodeOverlayTest.Name}, overlay); err != nil {
+					return false, err
+				}
+				readyCond, found := lo.Find(overlay.Status.Conditions, func(c status.Condition) bool {
+					return c.Type == ReadyConditionType
+				})
+				if !found {
+					s.t.Logf("NodeOverlay %s has no Ready condition yet", overlay.Name)
+					return false, nil
+				}
+				if readyCond.ObservedGeneration != overlay.Generation {
+					s.t.Logf("NodeOverlay %s Ready condition observedGeneration=%d generation=%d",
+						overlay.Name, readyCond.ObservedGeneration, overlay.Generation)
+					return false, nil
+				}
+				if string(readyCond.Status) != TrueConditionStatus {
+					s.t.Logf("NodeOverlay %s Ready status=%s", overlay.Name, readyCond.Status)
+					return false, nil
+				}
+				return true, nil
+			}), "nodeoverlay should become ready")
+
+		t.Logf("Scaling workload back up and validating preferred shape %s",
+			s.testConfig.NodeOverlayTest.PreferredShape)
+		s.ensureDeploymentReplicas(s.testConfig.TestDeployment.Name, s.testConfig.Namespace,
+			s.testConfig.TestDeployment.Replicas)
+		require.NoError(t, s.waitAndVerifyNodes(s.verifyInstanceShape, s.testConfig.NodeOverlayTest.PreferredShape),
+			"nodeoverlay should steer provisioning to the preferred shape")
+		s.verifyNodeClaim(s.testConfig.NodePool.Name, karpenterv1.CapacityTypeOnDemand, s.testConfig.OCINodeClass.ImageId)
+		require.NoError(t, s.checkPodsReady(s.testConfig.TestDeployment.Name, int(s.testConfig.TestDeployment.Replicas)),
+			"all pods should be running after nodeoverlay test")
+
+		t.Log("Scaling workload down and removing NodeOverlay before restoring NodePool requirements")
+		s.ensureDeploymentReplicas(s.testConfig.TestDeployment.Name, s.testConfig.Namespace, 0)
+		s.ensureAllNodeClaimDeleted()
+		require.NoError(t, s.deleteNodeOverlay(), "failed to delete nodeoverlay")
+
+		t.Logf("Restoring original requirements on NodePool %s", s.testConfig.NodePool.Name)
+		require.NoError(t, s.ctrlClient.Get(s.ctx, client.ObjectKey{Name: s.testConfig.NodePool.Name}, mainNodePool),
+			"should be able to get nodepool for restore")
+		mainNodePool.Spec.Template.Spec.Requirements = originalRequirements
+		require.NoError(t, s.ctrlClient.Update(s.ctx, mainNodePool), "failed to restore nodepool requirements")
+
+		t.Log("Scaling workload back up and validating baseline provisioning after cleanup")
+		s.ensureDeploymentReplicas(s.testConfig.TestDeployment.Name, s.testConfig.Namespace,
+			s.testConfig.TestDeployment.Replicas)
+		require.NoError(t, s.waitAndVerifyNodes(s.verifyScaleup, ""),
+			"nodepool should return to baseline provisioning after nodeoverlay cleanup")
+		s.verifyNodeClaim(s.testConfig.NodePool.Name, karpenterv1.CapacityTypeOnDemand, s.testConfig.OCINodeClass.ImageId)
+		require.NoError(t, s.checkPodsReady(s.testConfig.TestDeployment.Name, int(s.testConfig.TestDeployment.Replicas)),
+			"all pods should be running after restoring nodepool requirements")
+		t.Log("NodeOverlay test successful")
+	})
 }
 
 func (s *E2ETestSuite) TestSchedulingLabels() {
@@ -1011,6 +1152,121 @@ func (s *E2ETestSuite) TestScaleDown() {
 	s.t.Log("nodes scale down successfully")
 }
 
+func (s *E2ETestSuite) TestStaticCapacity() {
+	s.t.Run("StaticCapacity", func(t *testing.T) {
+		t.Log("Start StaticCapacity testing")
+
+		staticPoolName := s.testConfig.StaticCapacityTest.NodePoolName
+		if err := s.deleteClusterScopedByName(staticPoolName, func() client.Object {
+			return &karpenterv1.NodePool{}
+		}); err != nil && !apierrors.IsNotFound(err) {
+			require.NoError(t, err, "failed to clean up static nodepool before test")
+		}
+
+		staticInstanceTypes := s.testConfig.StaticCapacityTest.InstanceTypes
+		if len(staticInstanceTypes) == 0 {
+			staticInstanceTypes = s.testConfig.NodePool.InstanceTypes
+		}
+		t.Logf("StaticCapacity config: nodePool=%s initialReplicas=%d scaledReplicas=%d instanceTypes=%v",
+			staticPoolName,
+			s.testConfig.StaticCapacityTest.InitialReplicas,
+			s.testConfig.StaticCapacityTest.ScaledReplicas,
+			staticInstanceTypes)
+
+		staticPool := staticKarpenterNodePool(s.testConfig)
+		t.Logf("Creating static NodePool %s with replicas=%d",
+			staticPoolName, s.testConfig.StaticCapacityTest.InitialReplicas)
+		require.NoError(t, s.ctrlClient.Create(s.ctx, staticPool), "failed to create static nodepool")
+		defer func() {
+			t.Logf("Cleaning up static NodePool %s", staticPoolName)
+			if err := s.deleteClusterScopedByName(staticPoolName, func() client.Object {
+				return &karpenterv1.NodePool{}
+			}); err != nil && !apierrors.IsNotFound(err) {
+				s.t.Logf("Error deleting static NodePool: %v", err)
+			}
+			labels := client.MatchingLabels(map[string]string{NodePoolLabel: staticPoolName})
+			if err := wait.PollUntilContextTimeout(s.ctx, PollInterval, TestTimeout, true,
+				func(context.Context) (bool, error) {
+					var nodeClaimList karpenterv1.NodeClaimList
+					if err := s.ctrlClient.List(s.ctx, &nodeClaimList, labels); err != nil {
+						return false, err
+					}
+					return len(nodeClaimList.Items) == 0, nil
+				}); err != nil {
+				s.t.Logf("Error waiting for static NodeClaims cleanup: %v", err)
+			}
+		}()
+
+		waitForStaticCounts := func(expected int64) {
+			labels := client.MatchingLabels(map[string]string{NodePoolLabel: staticPoolName})
+			t.Logf("Waiting for static NodePool %s to converge to replicas=%d", staticPoolName, expected)
+			require.NoError(t, wait.PollUntilContextTimeout(s.ctx, PollInterval, NodeProvisionTimeout, true,
+				func(context.Context) (bool, error) {
+					nodes, err := s.getReadyNodes(labels)
+					if err != nil {
+						return false, err
+					}
+					if int64(len(nodes)) != expected {
+						s.t.Logf("static pool ready nodes=%d expected=%d", len(nodes), expected)
+						return false, nil
+					}
+
+					var nodeClaimList karpenterv1.NodeClaimList
+					if err := s.ctrlClient.List(s.ctx, &nodeClaimList, labels); err != nil {
+						return false, err
+					}
+					if int64(len(nodeClaimList.Items)) != expected {
+						s.t.Logf("static pool nodeclaims=%d expected=%d", len(nodeClaimList.Items), expected)
+						return false, nil
+					}
+
+					for _, nodeClaim := range nodeClaimList.Items {
+						initialized := nodeClaim.StatusConditions().Get(karpenterv1.ConditionTypeInitialized)
+						if !initialized.IsTrue() {
+							registered := nodeClaim.StatusConditions().Get(karpenterv1.ConditionTypeRegistered)
+							s.t.Logf(
+								"static NodeClaim %s not initialized yet (initialized=%s reason=%s message=%s registered=%s/%s)",
+								nodeClaim.Name,
+								initialized.Status,
+								initialized.Reason,
+								initialized.Message,
+								registered.Status,
+								registered.Reason,
+							)
+							return false, nil
+						}
+						readyCond, found := lo.Find(nodeClaim.Status.Conditions, func(c status.Condition) bool {
+							return c.Type == ReadyConditionType
+						})
+						if !found || string(readyCond.Status) != TrueConditionStatus {
+							s.t.Logf("static NodeClaim %s not ready yet (status=%s reason=%s message=%s)",
+								nodeClaim.Name, readyCond.Status, readyCond.Reason, readyCond.Message)
+							return false, nil
+						}
+					}
+					return true, nil
+				}), "static capacity should converge to the expected replica count")
+			t.Logf("Static NodePool %s converged to replicas=%d", staticPoolName, expected)
+		}
+
+		t.Log("Validating initial static replica count")
+		waitForStaticCounts(s.testConfig.StaticCapacityTest.InitialReplicas)
+
+		if s.testConfig.StaticCapacityTest.ScaledReplicas > s.testConfig.StaticCapacityTest.InitialReplicas {
+			current := &karpenterv1.NodePool{}
+			require.NoError(t, s.ctrlClient.Get(s.ctx, client.ObjectKey{Name: staticPoolName}, current),
+				"failed to get static nodepool before scaling")
+			t.Logf("Scaling static NodePool %s from replicas=%d to replicas=%d",
+				staticPoolName,
+				lo.FromPtr(current.Spec.Replicas),
+				s.testConfig.StaticCapacityTest.ScaledReplicas)
+			current.Spec.Replicas = lo.ToPtr(s.testConfig.StaticCapacityTest.ScaledReplicas)
+			require.NoError(t, s.ctrlClient.Update(s.ctx, current), "failed to scale static nodepool")
+			waitForStaticCounts(s.testConfig.StaticCapacityTest.ScaledReplicas)
+		}
+	})
+}
+
 func (s *E2ETestSuite) verifyScaleup(node *corev1.Node, _ any) bool {
 	instance, err := s.getInstance(node)
 	require.NoError(s.t, err, "Should be able to get instance details")
@@ -1571,7 +1827,7 @@ func (s *E2ETestSuite) PatchNodePoolRequirements(nodePool *karpenterv1.NodePool,
 		patched.Spec.Template.Spec.Requirements,
 		func(r karpenterv1.NodeSelectorRequirementWithMinValues, _ int) bool {
 			for _, dk := range deleteKeys {
-				if r.NodeSelectorRequirement.Key == dk {
+				if r.Key == dk {
 					return false
 				}
 			}
@@ -1584,11 +1840,9 @@ func (s *E2ETestSuite) PatchNodePoolRequirements(nodePool *karpenterv1.NodePool,
 			continue
 		}
 		newReq := karpenterv1.NodeSelectorRequirementWithMinValues{
-			NodeSelectorRequirement: corev1.NodeSelectorRequirement{
-				Key:      addKey,
-				Operator: corev1.NodeSelectorOpIn,
-				Values:   values,
-			},
+			Key:       addKey,
+			Operator:  corev1.NodeSelectorOpIn,
+			Values:    values,
 			MinValues: nil,
 		}
 		patched.Spec.Template.Spec.Requirements = append(patched.Spec.Template.Spec.Requirements, newReq)
@@ -1787,9 +2041,9 @@ func (s *E2ETestSuite) verifyNodeClaim(nodePoolName string, expectedCapacityType
 
 				// Ready must be True
 				readyCond, readyFound := lo.Find(nodeClaim.Status.Conditions, func(c status.Condition) bool {
-					return c.Type == "Ready"
+					return c.Type == ReadyConditionType
 				})
-				if !readyFound || string(readyCond.Status) != "True" {
+				if !readyFound || string(readyCond.Status) != TrueConditionStatus {
 					s.t.Logf("NodeClaim %s Ready not satisfied (found=%t, status=%s)",
 						nodeClaim.Name, readyFound, string(readyCond.Status))
 					return false, nil

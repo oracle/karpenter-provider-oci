@@ -43,8 +43,9 @@ helm uninstall karpenter "${NS_FLAG[@]}" --timeout 2m || echo "Release 'karpente
 kubectl patch ocinodeclasses.oci.oraclecloud.com --all --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
 kubectl patch nodeclaims.karpenter.sh --all --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
 kubectl patch nodepools.karpenter.sh --all --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
-kubectl patch crd ocinodeclasses.oci.oraclecloud.com nodeclaims.karpenter.sh nodepools.karpenter.sh --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
-kubectl delete crd ocinodeclasses.oci.oraclecloud.com nodeclaims.karpenter.sh nodepools.karpenter.sh --ignore-not-found=true
+kubectl patch nodeoverlays.karpenter.sh --all --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+kubectl patch crd ocinodeclasses.oci.oraclecloud.com nodeclaims.karpenter.sh nodepools.karpenter.sh nodeoverlays.karpenter.sh --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+kubectl delete crd ocinodeclasses.oci.oraclecloud.com nodeclaims.karpenter.sh nodepools.karpenter.sh nodeoverlays.karpenter.sh --ignore-not-found=true
 helm install karpenter "./$KARPENTER_CHART_TGZ" --values "$VALUES_YAML_FILE" "${NS_FLAG[@]}" "${CREATE_NS_FLAG[@]}" --wait --timeout 5m
 
 # Final rollout verification and summary
@@ -53,7 +54,7 @@ if [[ -n "${NAMESPACE:-}" ]]; then
   KNS_FLAG=(-n "$NAMESPACE")
 fi
 if kubectl "${KNS_FLAG[@]}" get deploy/karpenter >/dev/null 2>&1; then
-  kubectl "${KNS_FLAG[@]}" rollout status deploy/karpenter --timeout=60s
+  kubectl "${KNS_FLAG[@]}" rollout status deploy/karpenter --timeout=300s
   kubectl "${KNS_FLAG[@]}" get pods
   echo "Karpenter was successfully installed."
 else
