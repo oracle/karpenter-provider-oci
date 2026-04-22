@@ -98,6 +98,8 @@ spec:
               value: "{{ .Values.controller.metrics.port }}"
             - name: HEALTH_PROBE_PORT
               value: "{{ .Values.controller.healthProbe.port }}"
+            - name: OCI_SDK_APPEND_USER_AGENT
+              value: "karpenter-provider-oci"
             - name: SYSTEM_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -153,7 +155,7 @@ spec:
             {{- with .Values.controller.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-            {{- with .Values.controller.envFrom }}
+          {{- with .Values.controller.envFrom }}
           envFrom:
             {{- toYaml . | nindent 12 }}
           {{- end }}
