@@ -2,8 +2,27 @@ apiVersion: v1
 entries:
   karpenter:
   - apiVersion: v2
+    appVersion: v1.1.0
+    created: "2026-05-06T17:26:18.248448725Z"
+    description: A Helm chart for Karpenter provider OCI
+    digest: 7541430e00d9ad31cb682661fb19972539d3f5d2a5a11154c30f53fbd5a18d26
+    home: https://github.com/oracle/karpenter-provider-oci/
+    keywords:
+    - cluster
+    - node
+    - scheduler
+    - autoscaling
+    - lifecycle
+    name: karpenter
+    sources:
+    - https://github.com/oracle/karpenter-provider-oci/
+    type: application
+    urls:
+    - https://oracle.github.io/karpenter-provider-oci/charts/karpenter-1.1.0.tgz
+    version: 1.1.0
+  - apiVersion: v2
     appVersion: v1.0.0
-    created: "2026-05-05T22:20:53.938938+01:00"
+    created: "2026-05-06T17:26:18.247263263Z"
     description: A Helm chart for Karpenter provider OCI
     digest: 5a7503df39724aa722159bb519f2f0a5011ce631904a7d670cdb1ec7b6e79633
     home: https://github.com/oracle/karpenter-provider-oci/
@@ -20,4 +39,4 @@ entries:
     urls:
     - https://oracle.github.io/karpenter-provider-oci/charts/karpenter-1.0.0.tgz
     version: 1.0.0
-generated: "2026-05-05T22:20:53.937536+01:00"
+generated: "2026-05-06T17:26:18.245959089Z"
