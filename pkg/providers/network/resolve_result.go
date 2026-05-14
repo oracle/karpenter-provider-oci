@@ -78,6 +78,10 @@ func IsIPv6SingleStack(ipFamilies []IpFamily) bool {
 	return len(ipFamilies) == 1 && slices.Contains(ipFamilies, IPv6)
 }
 
+func IsIPv6(ipFamilies []IpFamily) bool {
+	return slices.Contains(ipFamilies, IPv6)
+}
+
 func GetDefaultSecondaryVnicIPCount(ipFamilies []IpFamily) int {
 	if IsIPv6SingleStack(ipFamilies) {
 		return DefaultIPv6SecondaryVnicIPCount

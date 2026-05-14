@@ -670,6 +670,7 @@ func TestResolveNetworkConfig_FlexCiderValidation(t *testing.T) {
 		ipFamily     []IpFamily
 		sVnicIds     []string
 		sVnicIpCount []*int
+		assignIPv6   *bool
 		expectedErr  *string
 	}{
 		{
@@ -677,29 +678,34 @@ func TestResolveNetworkConfig_FlexCiderValidation(t *testing.T) {
 			[]string{"subnet-dual"},
 			[]*int{lo.ToPtr(16)},
 			nil,
+			nil,
 		},
 		{
 			[]IpFamily{IPv4},
 			[]string{"subnet-dual"},
 			[]*int{lo.ToPtr(512)},
+			nil,
 			lo.ToPtr("max IP count per VNIC can't be over 256"),
 		},
 		{
 			[]IpFamily{IPv4},
 			[]string{"subnet-dual"},
 			[]*int{lo.ToPtr(34)},
+			nil,
 			lo.ToPtr("IP count must be power of 2"),
 		},
 		{
 			[]IpFamily{IPv4, IPv6},
 			[]string{"subnet-dual"},
 			[]*int{lo.ToPtr(34)},
+			nil,
 			lo.ToPtr("IP count must be power of 2"),
 		},
 		{
 			[]IpFamily{IPv6},
 			[]string{"subnet-dual"},
 			[]*int{lo.ToPtr(32)},
+			nil,
 			lo.ToPtr("single stack IPv6 nodepool only IP count 1, 16 and 256 will be supported"),
 		},
 		{
@@ -707,11 +713,13 @@ func TestResolveNetworkConfig_FlexCiderValidation(t *testing.T) {
 			[]string{"subnet-dual"},
 			[]*int{lo.ToPtr(1)},
 			nil,
+			nil,
 		},
 		{
 			[]IpFamily{IPv6},
 			[]string{"subnet-dual"},
 			[]*int{lo.ToPtr(16)},
+			nil,
 			nil,
 		},
 		{
@@ -719,11 +727,13 @@ func TestResolveNetworkConfig_FlexCiderValidation(t *testing.T) {
 			[]string{"subnet-dual"},
 			[]*int{lo.ToPtr(256)},
 			nil,
+			nil,
 		},
 		{
 			[]IpFamily{IPv4},
 			[]string{"subnet-dual", "subnet-dual", "subnet-dual"},
 			[]*int{lo.ToPtr(128), lo.ToPtr(128), lo.ToPtr(128)},
+			nil,
 			lo.ToPtr("total IP count of all VNICs can't be over 256"),
 		},
 		// Test for default ipCount
@@ -732,16 +742,19 @@ func TestResolveNetworkConfig_FlexCiderValidation(t *testing.T) {
 			[]string{"subnet-dual", "subnet-dual"},
 			nil,
 			nil,
+			nil,
 		},
 		{
 			[]IpFamily{IPv4, IPv6},
 			[]string{"subnet-dual"},
 			nil,
 			nil,
+			nil,
 		},
 		{
 			[]IpFamily{IPv6},
 			[]string{"subnet-dual"},
+			nil,
 			nil,
 			nil,
 		},
@@ -749,7 +762,64 @@ func TestResolveNetworkConfig_FlexCiderValidation(t *testing.T) {
 			[]IpFamily{IPv6},
 			[]string{"subnet-dual", "subnet-dual"},
 			nil,
+			nil,
 			lo.ToPtr("total IP count of all VNICs can't be over 256"),
+		},
+		{
+			[]IpFamily{IPv4},
+			[]string{"subnet-single-v4-cidr"},
+			nil,
+			nil,
+			nil,
+		},
+		{
+			[]IpFamily{IPv4},
+			[]string{"subnet-single-v4-cidr"},
+			[]*int{lo.ToPtr(64)},
+			nil,
+			lo.ToPtr("max IP count for single CIDR IPv4 subnet 'subnet-single-v4-cidr' can't over 32"),
+		},
+		{
+			[]IpFamily{IPv4},
+			[]string{"subnet-single-v4-cidr", "subnet-single-v4-cidr"},
+			[]*int{lo.ToPtr(64), lo.ToPtr(128)},
+			nil,
+			lo.ToPtr("max IP count for single CIDR IPv4 subnet 'subnet-single-v4-cidr' can't over 32; max IP count for single CIDR IPv4 subnet 'subnet-single-v4-cidr' can't over 32"),
+		},
+		{
+			[]IpFamily{IPv4, IPv6},
+			[]string{"subnet-single-v6-cidr"},
+			nil,
+			nil, // Singe IPv6 CIDR but not assigning IPv6 IP
+			nil,
+		},
+		{
+			[]IpFamily{IPv4, IPv6},
+			[]string{"subnet-dual"},
+			nil,
+			lo.ToPtr(true), // Assigning IPv6 IP but have two CIDRs
+			nil,
+		},
+		{
+			[]IpFamily{IPv4, IPv6},
+			[]string{"subnet-single-v6-cidr"},
+			nil,
+			lo.ToPtr(true),
+			lo.ToPtr("max IP count for single CIDR IPv6 subnet 'subnet-single-v6-cidr' can't over 16"),
+		},
+		{
+			[]IpFamily{IPv4, IPv6},
+			[]string{"subnet-single-v6-cidr"},
+			[]*int{lo.ToPtr(256)},
+			lo.ToPtr(true),
+			lo.ToPtr("max IP count for single CIDR IPv6 subnet 'subnet-single-v6-cidr' can't over 16"),
+		},
+		{
+			[]IpFamily{IPv4, IPv6},
+			[]string{"subnet-single-v6-cidr", "subnet-single-v6-cidr"},
+			[]*int{lo.ToPtr(256), nil},
+			lo.ToPtr(true),
+			lo.ToPtr("total IP count of all VNICs can't be over 256; max IP count for single CIDR IPv6 subnet 'subnet-single-v6-cidr' can't over 16; max IP count for single CIDR IPv6 subnet 'subnet-single-v6-cidr' can't over 16"),
 		},
 	}
 
@@ -772,6 +842,7 @@ func TestResolveNetworkConfig_FlexCiderValidation(t *testing.T) {
 								SubnetId: &subnetId,
 							},
 						},
+						AssignIpV6Ip: tc.assignIPv6,
 					},
 					IpCount: ipCount,
 				})
@@ -796,5 +867,74 @@ func TestResolveNetworkConfig_FlexCiderValidation(t *testing.T) {
 			assert.NotNil(t, result)
 		}
 	}
+}
 
+func TestValidateSecondaryVnicIpCountsAgainstCidrs_SingleCidr_EmptyCidrBlockList(t *testing.T) {
+	provider, _ := newProviderForNetworkTests([]IpFamily{IPv4, IPv6}, true)
+
+	t.Run("Ipv6CidrBlocks empty, Ipv6CidrBlock set, AssignIpV6Ip set, exceed max", func(t *testing.T) {
+		subnet := &ocicore.Subnet{
+			Id:             lo.ToPtr("test-v6-subnet"),
+			Ipv6CidrBlocks: []string{},
+			Ipv6CidrBlock:  lo.ToPtr("2001:db8::/56"),
+		}
+		vnicConfig := &v1beta1.SecondaryVnicConfig{
+			SimpleVnicConfig: v1beta1.SimpleVnicConfig{
+				AssignIpV6Ip: lo.ToPtr(true),
+			},
+			IpCount: lo.ToPtr(32),
+		}
+		sn := SubnetAndNsgs{Subnet: subnet}
+		err := provider.validateSecondaryVnicIpCountsAgainstCidrs(vnicConfig, sn)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "max IP count for single CIDR IPv6 subnet")
+	})
+
+	t.Run("Ipv6CidrBlocks empty, Ipv6CidrBlock set, AssignIpV6Ip set, within max", func(t *testing.T) {
+		subnet := &ocicore.Subnet{
+			Id:             lo.ToPtr("test-v6-subnet"),
+			Ipv6CidrBlocks: []string{},
+			Ipv6CidrBlock:  lo.ToPtr("2001:db8::/56"),
+		}
+		vnicConfig := &v1beta1.SecondaryVnicConfig{
+			SimpleVnicConfig: v1beta1.SimpleVnicConfig{
+				AssignIpV6Ip: lo.ToPtr(true),
+			},
+			IpCount: lo.ToPtr(16),
+		}
+		sn := SubnetAndNsgs{Subnet: subnet}
+		err := provider.validateSecondaryVnicIpCountsAgainstCidrs(vnicConfig, sn)
+		assert.NoError(t, err)
+	})
+
+	t.Run("Ipv4CidrBlocks empty, CidrBlock set, not IPv6, exceed max", func(t *testing.T) {
+		provider, _ := newProviderForNetworkTests([]IpFamily{IPv4}, true)
+		subnet := &ocicore.Subnet{
+			Id:             lo.ToPtr("test-v4-subnet"),
+			Ipv4CidrBlocks: []string{},
+			CidrBlock:      lo.ToPtr("10.0.0.0/24"),
+		}
+		vnicConfig := &v1beta1.SecondaryVnicConfig{
+			IpCount: lo.ToPtr(64),
+		}
+		sn := SubnetAndNsgs{Subnet: subnet}
+		err := provider.validateSecondaryVnicIpCountsAgainstCidrs(vnicConfig, sn)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "max IP count for single CIDR IPv4 subnet")
+	})
+
+	t.Run("Ipv4CidrBlocks empty, CidrBlock set, not IPv6, within max", func(t *testing.T) {
+		provider, _ := newProviderForNetworkTests([]IpFamily{IPv4}, true)
+		subnet := &ocicore.Subnet{
+			Id:             lo.ToPtr("test-v4-subnet"),
+			Ipv4CidrBlocks: []string{},
+			CidrBlock:      lo.ToPtr("10.0.0.0/24"),
+		}
+		vnicConfig := &v1beta1.SecondaryVnicConfig{
+			IpCount: lo.ToPtr(16),
+		}
+		sn := SubnetAndNsgs{Subnet: subnet}
+		err := provider.validateSecondaryVnicIpCountsAgainstCidrs(vnicConfig, sn)
+		assert.NoError(t, err)
+	})
 }

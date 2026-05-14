@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
@@ -122,6 +123,11 @@ func (p *DefaultProvider) ResolveNetworkConfig(ctx context.Context,
 					vnicConfig.SimpleVnicConfig, fmt.Sprintf("second vnic %d", idx))
 				if err != nil {
 					errs = multierr.Append(errs, err)
+				} else {
+					cidrNumberValidationError := p.validateSecondaryVnicIpCountsAgainstCidrs(vnicConfig, subnetAndNsg)
+					if cidrNumberValidationError != nil {
+						errs = multierr.Append(errs, cidrNumberValidationError)
+					}
 				}
 
 				otherVnicSubnetAndNsgs = append(otherVnicSubnetAndNsgs, &subnetAndNsg)
@@ -150,10 +156,7 @@ IPv6 will have some additional restrictions
 func (p *DefaultProvider) validateSecondaryVnicIpCounts(networkCfg *v1beta1.NetworkConfig) error {
 	ipCountSum := 0
 	for _, vnicConfig := range networkCfg.SecondaryVnicConfigs {
-		ipCountVal := GetDefaultSecondaryVnicIPCount(p.ipFamilies)
-		if vnicConfig.IpCount != nil {
-			ipCountVal = *vnicConfig.IpCount
-		}
+		ipCountVal := p.ipCountToCheck(vnicConfig)
 
 		if ipCountVal > 256 {
 			return errors.New("max IP count per VNIC can't be over 256")
@@ -175,6 +178,61 @@ func (p *DefaultProvider) validateSecondaryVnicIpCounts(networkCfg *v1beta1.Netw
 		return errors.New("total IP count of all VNICs can't be over 256")
 	}
 	return nil
+}
+
+/*
+If the subnet only has one CIDR block for IPv6 enabled cluster and assigned IPv6 IP, the max allowed IP is 16,
+If the subnet only has one CIDR block for IPv4 subnet, the max allowed IP is 32
+*/
+func (p *DefaultProvider) validateSecondaryVnicIpCountsAgainstCidrs(vnicConfig *v1beta1.SecondaryVnicConfig,
+	subnetAndNsg SubnetAndNsgs) error {
+	ipCountVal := p.ipCountToCheck(vnicConfig)
+	if subnetAndNsg.Subnet != nil {
+		//When the subnet is resolved, and it is IPv6 enabled and assigned IPv6 IP, for single CIDR block, KPO only allows <=16 IPs
+		if IsIPv6(p.ipFamilies) && vnicConfig.AssignIpV6Ip != nil && *vnicConfig.AssignIpV6Ip {
+			ipV6CidrBlocks := getCidrBlocks(subnetAndNsg.Subnet.Ipv6CidrBlock, subnetAndNsg.Subnet.Ipv6CidrBlocks)
+
+			if len(ipV6CidrBlocks) == 1 && ipCountVal > 16 {
+				return errors.New(fmt.Sprintf("max IP count for single CIDR IPv6 subnet '%s' can't over 16",
+					strPtrToStr(subnetAndNsg.Subnet.Id)))
+			}
+		} else {
+			//When the subnet is resolved and IPv6, for single CIDR block, it only allows <=32 IPs
+			ipv4CidrBlocks := getCidrBlocks(subnetAndNsg.Subnet.CidrBlock, subnetAndNsg.Subnet.Ipv4CidrBlocks)
+			if len(ipv4CidrBlocks) == 1 && ipCountVal > 32 {
+				return errors.New(fmt.Sprintf("max IP count for single CIDR IPv4 subnet '%s' can't over 32",
+					strPtrToStr(subnetAndNsg.Subnet.Id)))
+			}
+		}
+	}
+	return nil
+}
+
+/*
+*
+According the ocicore Subnet contract. CidrBlock or Ipv6CidrBlock is the default cidr block of the subnet,
+Ipv4CidrBlocks or Ipv6CidrBlocks contains all Cidr blocks it has, which will include all cidr blocks including
+the one from CidrBlock or Ipv6CidrBlock. In theory Ipv4CidrBlocks or Ipv6CidrBlocks will not be nil or empty.
+This code is just for any unexpect situations if Ipv4CidrBlocks or Ipv6CidrBlocks is empty, we will use default
+cider blocks for the check instead.
+*/
+func getCidrBlocks(defaultCidrBlock *string, allCidrBlocks []string) []string {
+	cidrBlocks := make([]string, 0)
+	if len(allCidrBlocks) == 0 && defaultCidrBlock != nil &&
+		strings.TrimSpace(*defaultCidrBlock) != "" {
+		cidrBlocks = append(cidrBlocks, *defaultCidrBlock)
+	} else {
+		cidrBlocks = allCidrBlocks
+	}
+	return cidrBlocks
+}
+
+func (p *DefaultProvider) ipCountToCheck(vnicConfig *v1beta1.SecondaryVnicConfig) int {
+	ipCountVal := GetDefaultSecondaryVnicIPCount(p.ipFamilies)
+	if vnicConfig.IpCount != nil {
+		ipCountVal = *vnicConfig.IpCount
+	}
+	return ipCountVal
 }
 
 func (p *DefaultProvider) resolveSimpleVnicConfig(ctx context.Context, config v1beta1.SimpleVnicConfig,
@@ -461,4 +519,12 @@ func (p *DefaultProvider) GetVnicCached(ctx context.Context, vnicOcid string) (*
 	return p.vnicCache.GetOrLoad(ctx, vnicOcid, func(ctx context.Context, key string) (*ocicore.Vnic, error) {
 		return p.getVnicImpl(ctx, key)
 	})
+}
+
+func strPtrToStr(strValue *string) string {
+	if strValue == nil {
+		return ""
+	}
+
+	return *strValue
 }
