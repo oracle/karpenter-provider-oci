@@ -37,7 +37,7 @@ spec:
   disruption:
     budgets:
       - nodes: 5%
-    consolidateAfter: 60m
+    consolidateAfter: 10m
     consolidationPolicy: WhenEmpty
   limits:
     cpu: 64
@@ -101,7 +101,7 @@ spec:
           - Drifted
         schedule: "@daily" # customize for your needs (see https://karpenter.sh/docs/concepts/disruption/)
         duration: 10m
-    consolidateAfter: 60m
+    consolidateAfter: 10m
     consolidationPolicy: WhenEmpty
   limits:
     cpu: 64
