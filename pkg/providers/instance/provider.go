@@ -201,6 +201,9 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 
 	resp, err := p.computeClient.LaunchInstance(ctx, launchRequest)
 	if err != nil {
+		if oci.IsOutOfHostCapacity(err) {
+			return nil, NoCapacityError{}
+		}
 		return nil, err
 	}
 
@@ -251,7 +254,11 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 					return nil, errors.New("work-request failed")
 				}
 				if len(errResp.Items) > 0 && errResp.Items[0].Message != nil {
-					return nil, errors.New(*errResp.Items[0].Message)
+					err = errors.New(*errResp.Items[0].Message)
+					if oci.IsOutOfHostCapacity(err) {
+						return nil, NoCapacityError{}
+					}
+					return nil, err
 				}
 				return nil, fmt.Errorf("work-request failed %s", wrID)
 			}

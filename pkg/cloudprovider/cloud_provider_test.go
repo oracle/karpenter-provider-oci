@@ -629,6 +629,34 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 			Expect(launchCount).To(Equal(2))
 		})
 
+		It("should return insufficient capacity when launch exhausts out of host capacity errors", func() {
+			launchCount := 0
+			cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
+				kubeClient:    kubeClient,
+				instanceTypes: []*instancetype.OciInstanceType{instanceA, instanceB},
+				imageProvider: &FakeImageProvider{
+					ResolveImageForShapeFn: func(_ context.Context, _ *v1beta1.ImageConfig,
+						_ string) (*image.ImageResolveResult, error) {
+						return imageResult, nil
+					},
+				},
+				instanceProvider: &FakeInstanceProvider{
+					LaunchInstanceFn: func(_ context.Context, _ *v1.NodeClaim, _ *v1beta1.OCINodeClass,
+						_ *instancetype.OciInstanceType, _ *image.ImageResolveResult, _ *network.NetworkResolveResult,
+						_ *kms.KmsKeyResolveResult, _ *placement.Proposal) (*instance.InstanceInfo, error) {
+						launchCount++
+						return nil, errors.New("Out of host capacity in selected AD")
+					},
+				},
+			})
+
+			_, err := cp.Create(context.Background(), nodeClaim)
+			Expect(cloudprovider.IsInsufficientCapacityError(err)).To(BeTrue())
+			var createErr *cloudprovider.CreateError
+			Expect(errors.As(err, &createErr)).To(BeFalse())
+			Expect(launchCount).To(Equal(2))
+		})
+
 		It("should return a create error when launch fails with a non-capacity error", func() {
 			cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
 				kubeClient:    kubeClient,

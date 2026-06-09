@@ -1086,6 +1086,16 @@ func TestProvider_LaunchInstance_FailurePaths(t *testing.T) {
 		fc.LaunchErr = nil
 	})
 
+	t.Run("out of host capacity launch error returns no capacity", func(t *testing.T) {
+		fc.LaunchErr = errors.New("Out of host capacity in selected AD")
+		_, err := p.LaunchInstance(context.TODO(), baseClaim, baseNodeClass,
+			&instancetype.OciInstanceType{
+				Shape: "VM.Standard.E4.Flex"}, imgRes, netRes, nil, pp)
+		require.Error(t, err)
+		assert.Equal(t, NoCapacityError{}, err)
+		fc.LaunchErr = nil
+	})
+
 }
 
 func TestProvider_Cached_Wrappers_Negative(t *testing.T) {
@@ -1279,6 +1289,65 @@ func TestProvider_LaunchInstance_WorkRequestSuccess(t *testing.T) {
 	assert.NotNil(t, inst)
 	assert.Equal(t, "ocid1.instance.oc1..new", *inst.Id)
 	assert.Greater(t, callCount, 0, "expected GetWorkRequest called at least once")
+}
+
+func TestProvider_LaunchInstance_WorkRequestOutOfHostCapacity(t *testing.T) {
+	fc := &fakes.FakeCompute{}
+	fwr := &fakes.FakeWorkRequest{}
+
+	fc.OnLaunch = func(ctx context.Context, r ocicore.LaunchInstanceRequest) (ocicore.LaunchInstanceResponse, error) {
+		return ocicore.LaunchInstanceResponse{
+			Instance: ocicore.Instance{Id: lo.ToPtr("ocid1.instance.oc1..new")},
+			Etag:     lo.ToPtr("etag-new"),
+			RawResponse: &http.Response{
+				StatusCode: 200,
+				Header: http.Header{
+					"Opc-Work-Request-Id": []string{"wr-launch-123"},
+				},
+			},
+		}, nil
+	}
+
+	fwr.GetResp = ociwr.GetWorkRequestResponse{
+		WorkRequest: ociwr.WorkRequest{
+			Status:       ociwr.WorkRequestStatusFailed,
+			TimeFinished: &common.SDKTime{Time: time.Now()},
+			TimeStarted:  &common.SDKTime{Time: time.Now()},
+		},
+	}
+	fwr.ListErrorsResp = ociwr.ListWorkRequestErrorsResponse{
+		Items: []ociwr.WorkRequestError{{
+			Code:      lo.ToPtr("InternalError"),
+			Message:   lo.ToPtr("Out of host capacity in selected AD"),
+			Timestamp: &common.SDKTime{Time: time.Now()},
+		}},
+	}
+
+	imdsp, err := instancemeta.NewProvider(context.TODO(), "10.0.0.1", []byte("CA"), ipV4SingleStack)
+	require.NoError(t, err)
+	p := &DefaultProvider{
+		computeClient:        fc,
+		workRequestClient:    fwr,
+		instanceMetaProvider: imdsp,
+		clusterCompartmentId: "ocid1.compartment.oc1..parent",
+		launchTimeoutVM:      10 * time.Minute,
+		launchTimeoutBM:      20 * time.Minute,
+		pollInterval:         time.Millisecond,
+	}
+
+	it := &instancetype.OciInstanceType{
+		InstanceType: cloudprovider.InstanceType{
+			Name:      "VM.Standard.E4.Flex",
+			Offerings: cloudprovider.Offerings{makeOfferingWithCapType(corev1.CapacityTypeOnDemand)},
+		},
+		Shape: "VM.Standard.E4.Flex",
+	}
+
+	_, err = p.LaunchInstance(context.TODO(), minimalNodeClaim(), minimalNodeClass(), it, minimalImageResolve(),
+		minimalNetworkResolve(), nil, minimalPlacement())
+	require.Error(t, err)
+	assert.Equal(t, NoCapacityError{}, err)
+	assert.Equal(t, 1, fwr.ListCount.Get())
 }
 
 func TestProvider_LaunchInstance_Timeout(t *testing.T) {

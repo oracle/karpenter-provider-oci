@@ -218,11 +218,14 @@ func TestIsNotFound(t *testing.T) {
 }
 
 func TestIsOutOfHostCapacity(t *testing.T) {
+	assert.False(t, IsOutOfHostCapacity(nil))
+
 	assert.True(t, IsOutOfHostCapacity(fakeServiceError{
 		httpStatus: http.StatusConflict,
 		code:       "IncorrectState",
 		message:    "Out of host capacity in selected AD",
 	}))
+	assert.True(t, IsOutOfHostCapacity(stderrs.New("Out of host capacity in selected AD")))
 
 	assert.False(t, IsOutOfHostCapacity(fakeServiceError{
 		httpStatus: http.StatusConflict,
