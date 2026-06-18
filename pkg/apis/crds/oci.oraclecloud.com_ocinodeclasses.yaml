@@ -56,6 +56,17 @@ spec:
           spec:
             description: Spec defines the desired state of the node class.
             properties:
+              agentList:
+                description: |-
+                  AgentList is a list of Oracle Cloud Agent plugins to enable on the launched instance.
+                  Each entry must be the exact plugin name as listed by the OCI ListInstanceagentAvailablePlugins
+                  API (for example, "Bastion", "Block Volume Management", "Compute Instance Monitoring",
+                  "OS Management Service Agent"). Each listed plugin is set to ENABLED at launch time;
+                  any plugin not listed is left at its image default. Unknown plugin names are accepted by
+                  this provider but ignored by the OCI control plane.
+                items:
+                  type: string
+                type: array
               capacityReservationConfigs:
                 description: CapacityReservationConfigs contains an array of capacity
                   reservations

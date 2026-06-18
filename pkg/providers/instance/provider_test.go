@@ -147,6 +147,52 @@ func TestProvider_BuildDefinedTags(t *testing.T) {
 	}
 }
 
+func TestProvider_BuildAgentConfig(t *testing.T) {
+	enabled := ocicore.InstanceAgentPluginConfigDetailsDesiredStateEnabled
+	tests := []struct {
+		name string
+		in   []string
+		want *ocicore.LaunchInstanceAgentConfigDetails
+	}{
+		{
+			name: "nil list returns nil",
+			in:   nil,
+			want: nil,
+		},
+		{
+			name: "empty list returns nil",
+			in:   []string{},
+			want: nil,
+		},
+		{
+			name: "single plugin enabled",
+			in:   []string{"Bastion"},
+			want: &ocicore.LaunchInstanceAgentConfigDetails{
+				PluginsConfig: []ocicore.InstanceAgentPluginConfigDetails{
+					{Name: lo.ToPtr("Bastion"), DesiredState: enabled},
+				},
+			},
+		},
+		{
+			name: "multiple plugins enabled in order",
+			in:   []string{"Bastion", "Block Volume Management", "Compute Instance Monitoring"},
+			want: &ocicore.LaunchInstanceAgentConfigDetails{
+				PluginsConfig: []ocicore.InstanceAgentPluginConfigDetails{
+					{Name: lo.ToPtr("Bastion"), DesiredState: enabled},
+					{Name: lo.ToPtr("Block Volume Management"), DesiredState: enabled},
+					{Name: lo.ToPtr("Compute Instance Monitoring"), DesiredState: enabled},
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildAgentConfig(tt.in)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestProvider_GetInstanceCompartment(t *testing.T) {
 	p := &DefaultProvider{clusterCompartmentId: "cluster-compartment"}
 	tests := []struct {

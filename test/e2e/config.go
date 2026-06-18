@@ -63,6 +63,8 @@ type OCINodeClassConfig struct {
 	Metadata                map[string]string
 	FreeformTags            map[string]string
 	DefinedTags             map[string]map[string]string
+	// AgentList is the list of OCI Cloud Agent plugins to enable on launched instances
+	AgentList []string
 }
 
 type TestDeploymentConfig struct {

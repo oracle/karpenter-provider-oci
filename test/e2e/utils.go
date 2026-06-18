@@ -275,6 +275,7 @@ func oCINodeClass(name string, config *KarpenterE2ETestConfig) *ociv1beta1.OCINo
 			Metadata:          config.OCINodeClass.Metadata,
 			FreeformTags:      config.OCINodeClass.FreeformTags,
 			DefinedTags:       config.OCINodeClass.DefinedTags,
+			AgentList:         config.OCINodeClass.AgentList,
 		},
 	}
 }

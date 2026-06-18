@@ -167,6 +167,8 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 
 	launchOptions := BuildLaunchOptions(nodeClass.Spec.LaunchOptions)
 
+	agentConfig := buildAgentConfig(nodeClass.Spec.AgentList)
+
 	freeFormTags, err := buildFreeFormTags(nodeClass, nodeClaim)
 	if err != nil {
 		return nil, err
@@ -196,6 +198,7 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 			},
 			IsPvEncryptionInTransitEnabled: &IsPvEncryptionInTransitEnabled,
 			LaunchOptions:                  launchOptions,
+			AgentConfig:                    agentConfig,
 		},
 	}
 
@@ -550,6 +553,20 @@ func buildShapeConfigFromInstanceType(it *instancetype.OciInstanceType) *ocicore
 	}
 
 	return l
+}
+
+func buildAgentConfig(agentList []string) *ocicore.LaunchInstanceAgentConfigDetails {
+	if len(agentList) == 0 {
+		return nil
+	}
+	return &ocicore.LaunchInstanceAgentConfigDetails{
+		PluginsConfig: lo.Map(agentList, func(name string, _ int) ocicore.InstanceAgentPluginConfigDetails {
+			return ocicore.InstanceAgentPluginConfigDetails{
+				Name:         lo.ToPtr(name),
+				DesiredState: ocicore.InstanceAgentPluginConfigDetailsDesiredStateEnabled,
+			}
+		}),
+	}
 }
 
 func BuildLaunchOptions(slo *v1beta1.LaunchOptions) *ocicore.LaunchOptions {

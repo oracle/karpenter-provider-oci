@@ -305,6 +305,7 @@ func TestKarpenterE2EFlannel(t *testing.T) {
 		s.TestScaleUp()
 		s.TestSchedulingLabels()
 		s.TestShapeConfig()
+		s.TestAgentConfig()
 		s.TestCapacityReservation()
 		s.TestDriftDetection()
 		s.TestCostBasedConsolidation()
@@ -665,6 +666,57 @@ func (s *E2ETestSuite) patchAndVerifyShapeConfigs(cases []struct {
 			s.t.Logf("%s shape config test successful", tc.name)
 		})
 	}
+}
+
+func (s *E2ETestSuite) TestAgentConfig() {
+	s.t.Run("AgentConfig", func(t *testing.T) {
+		t.Log("Start AgentConfig testing")
+		s.ensureDeploymentReplicas(s.testConfig.TestDeployment.Name, s.testConfig.Namespace,
+			s.testConfig.TestDeployment.Replicas)
+		nodePool := &karpenterv1.NodePool{}
+		require.NoError(t, s.ctrlClient.Get(s.ctx, client.ObjectKey{Name: s.testConfig.NodePool.Name}, nodePool))
+
+		expectedPlugins := []string{"Compute Instance Monitoring"}
+		require.NoError(t, s.patchOCINodeClass(func(p *ociv1beta1.OCINodeClass) {
+			p.Spec.AgentList = expectedPlugins
+		}), "Failed to patch OCINodeClass with agentList")
+
+		err := s.waitAndVerifyNodes(s.verifyAgentConfig, expectedPlugins)
+		require.NoError(t, err, "Nodes should reflect the agentList configuration")
+
+		err = s.checkPodsReady(s.testConfig.TestDeployment.Name, int(s.testConfig.TestDeployment.Replicas))
+		require.NoError(t, err, "All pods should be running after AgentConfig test")
+
+		// Reset agentList so it does not leak into subsequent tests.
+		require.NoError(t, s.patchOCINodeClass(func(p *ociv1beta1.OCINodeClass) {
+			p.Spec.AgentList = nil
+		}), "Failed to reset OCINodeClass agentList")
+		t.Log("AgentConfig test successful")
+	})
+}
+
+func (s *E2ETestSuite) verifyAgentConfig(node *corev1.Node, expected any) bool {
+	expectedPlugins := expected.([]string)
+	instance, err := s.getInstance(node)
+	require.NoError(s.t, err, "Should be able to get instance details")
+	if instance.AgentConfig == nil {
+		s.t.Logf("Instance %s has no AgentConfig yet", *instance.Id)
+		return false
+	}
+	enabled := make(map[string]bool)
+	for _, plugin := range instance.AgentConfig.PluginsConfig {
+		if plugin.Name != nil &&
+			plugin.DesiredState == ocicore.InstanceAgentPluginConfigDetailsDesiredStateEnabled {
+			enabled[*plugin.Name] = true
+		}
+	}
+	for _, name := range expectedPlugins {
+		if !enabled[name] {
+			s.t.Logf("Plugin %q not yet ENABLED on instance %s; enabled=%v", name, *instance.Id, enabled)
+			return false
+		}
+	}
+	return true
 }
 
 func (s *E2ETestSuite) TestFlexShapeMultipleVnics() {
