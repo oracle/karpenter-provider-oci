@@ -51,6 +51,9 @@ const (
 	PreemptibleTaintKey = "oci.oraclecloud.com/oke-is-preemptible"
 	NvidiaGpuTaintKey   = "nvidia.com/gpu"
 	AmdGpuTaintKey      = "amd.com/gpu"
+
+	NvidiaGpuResourceName = v1.ResourceName("nvidia.com/gpu")
+	AmdGpuResourceName    = v1.ResourceName("amd.com/gpu")
 )
 
 type Provider interface {
@@ -479,8 +482,26 @@ func setCapacity(it *OciInstanceType, shape *ocicore.Shape, ocpu float32, gbs fl
 			*class.Spec.VolumeConfig.BootVolumeConfig.SizeInGBs, resource.Giga)
 	}
 
+	if gpuCount := gpuCount(shape); gpuCount > 0 {
+		res[gpuResourceName(shape)] = *resource.NewQuantity(int64(gpuCount), resource.DecimalSI)
+	}
+
 	it.InstanceType.Capacity = res
-	// TBD: add Nvme, gpu, vnic attachments
+	// TBD: add Nvme, vnic attachments
+}
+
+func gpuResourceName(shape *ocicore.Shape) v1.ResourceName {
+	if shape != nil && IsAmdGpuShape(*shape) {
+		return AmdGpuResourceName
+	}
+	return NvidiaGpuResourceName
+}
+
+func gpuCount(shape *ocicore.Shape) int {
+	if shape == nil || shape.Gpus == nil {
+		return 0
+	}
+	return *shape.Gpus
 }
 
 func vcpu(shape *ocicore.Shape, ocpu float32) float32 {
@@ -727,6 +748,10 @@ func (p *DefaultProvider) calculatePrices(shape *ocicore.Shape, ocpu float32, gb
 
 	if si == nil {
 		return 0, false
+	}
+
+	if gpuCount := gpuCount(shape); gpuCount > 0 {
+		return si.OcpuUnitPrice * float64(gpuCount), true
 	}
 
 	cpuDiscount := float64(1)

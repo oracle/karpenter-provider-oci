@@ -30,6 +30,15 @@ func IsGpuShape(shape ocicore.Shape) bool {
 	return shape.Gpus != nil && *shape.Gpus > 0
 }
 
+func IsAmdGpuShape(shape ocicore.Shape) bool {
+	if shape.GpuDescription == nil {
+		return false
+	}
+
+	u := strings.ToUpper(*shape.GpuDescription)
+	return strings.Contains(u, string(ShapeSerialAmd))
+}
+
 func IsBmShape(shape string) bool {
 	u := strings.ToUpper(shape)
 

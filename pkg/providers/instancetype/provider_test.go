@@ -274,7 +274,16 @@ func TestIsArmGpuBmDenseFlexAndArch(t *testing.T) {
 	armShape := ocicore.Shape{Shape: lo.ToPtr("VM.Standard.A1.Flex"), IsFlexible: lo.ToPtr(true)}
 	amdShape := ocicore.Shape{Shape: lo.ToPtr("VM.Standard.E4.Flex"), IsFlexible: lo.ToPtr(true)}
 	bmShape := ocicore.Shape{Shape: lo.ToPtr("BM.Standard.E4.128")}
-	gpuShape := ocicore.Shape{Shape: lo.ToPtr("VM.GPU.A10.1"), Gpus: lo.ToPtr(1)}
+	gpuShape := ocicore.Shape{
+		Shape:          lo.ToPtr("VM.GPU.A10.1"),
+		Gpus:           lo.ToPtr(1),
+		GpuDescription: lo.ToPtr("NVIDIA A10"),
+	}
+	amdGpuShape := ocicore.Shape{
+		Shape:          lo.ToPtr("BM.GPU.MI300X.8"),
+		Gpus:           lo.ToPtr(8),
+		GpuDescription: lo.ToPtr("AMD MI300X"),
+	}
 	denseIo := ocicore.Shape{Shape: lo.ToPtr("VM.Standard3.DenseIO64"), LocalDisksTotalSizeInGBs: lo.ToPtr[float32](1024)}
 
 	assert.True(t, IsArmShape(armShape))
@@ -282,6 +291,9 @@ func TestIsArmGpuBmDenseFlexAndArch(t *testing.T) {
 
 	assert.True(t, IsGpuShape(gpuShape))
 	assert.False(t, IsGpuShape(amdShape))
+	assert.False(t, IsAmdGpuShape(gpuShape))
+	assert.True(t, IsAmdGpuShape(amdGpuShape))
+	assert.False(t, IsAmdGpuShape(amdShape))
 
 	assert.True(t, IsBmShape(*bmShape.Shape))
 	assert.False(t, IsBmShape(*amdShape.Shape))
@@ -296,6 +308,119 @@ func TestIsArmGpuBmDenseFlexAndArch(t *testing.T) {
 	// Compute cluster supported shape list is upper-cased internally
 	assert.True(t, p.isComputeClusterSupportedShape("BM.GPU.H100.8"))
 	assert.False(t, p.isComputeClusterSupportedShape("VM.Standard.E4.Flex"))
+}
+
+func TestSetCapacity_GPUResources(t *testing.T) {
+	nc := &ociv1beta1.OCINodeClass{
+		Spec: ociv1beta1.OCINodeClassSpec{
+			VolumeConfig: &ociv1beta1.VolumeConfig{
+				BootVolumeConfig: &ociv1beta1.BootVolumeConfig{},
+			},
+		},
+	}
+
+	tests := []struct {
+		name            string
+		shape           ocicore.Shape
+		wantResource    v1.ResourceName
+		wantGPUQuantity *resource.Quantity
+	}{
+		{
+			name: "nvidia gpu shape",
+			shape: ocicore.Shape{
+				Shape:      lo.ToPtr("VM.GPU.A10.2"),
+				IsFlexible: lo.ToPtr(false),
+				Gpus:       lo.ToPtr(2),
+			},
+			wantResource:    NvidiaGpuResourceName,
+			wantGPUQuantity: resource.NewQuantity(2, resource.DecimalSI),
+		},
+		{
+			name: "amd gpu shape",
+			shape: ocicore.Shape{
+				Shape:          lo.ToPtr("BM.GPU.MI300X.8"),
+				IsFlexible:     lo.ToPtr(false),
+				Gpus:           lo.ToPtr(8),
+				GpuDescription: lo.ToPtr("AMD MI300X"),
+			},
+			wantResource:    AmdGpuResourceName,
+			wantGPUQuantity: resource.NewQuantity(8, resource.DecimalSI),
+		},
+		{
+			name: "non gpu shape",
+			shape: ocicore.Shape{
+				Shape:      lo.ToPtr("VM.Standard.E4.Flex"),
+				IsFlexible: lo.ToPtr(true),
+			},
+		},
+		{
+			name: "gpu shape name with missing gpu count",
+			shape: ocicore.Shape{
+				Shape:      lo.ToPtr("BM.GPU.H100.8"),
+				IsFlexible: lo.ToPtr(false),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			it := &OciInstanceType{}
+
+			setCapacity(it, &tt.shape, 2, 8, nc, ipV4SingleStack)
+
+			assert.Contains(t, it.Capacity, v1.ResourceCPU)
+			assert.Contains(t, it.Capacity, v1.ResourceMemory)
+			assert.Contains(t, it.Capacity, v1.ResourcePods)
+			if tt.wantGPUQuantity == nil {
+				assert.NotContains(t, it.Capacity, NvidiaGpuResourceName)
+				assert.NotContains(t, it.Capacity, AmdGpuResourceName)
+				return
+			}
+			assert.True(t, tt.wantGPUQuantity.Equal(it.Capacity[tt.wantResource]))
+		})
+	}
+}
+
+func TestGpuResourceName(t *testing.T) {
+	tests := []struct {
+		name  string
+		shape ocicore.Shape
+		want  v1.ResourceName
+	}{
+		{
+			name: "amd gpu description uses amd gpu resource",
+			shape: ocicore.Shape{
+				Shape:          lo.ToPtr("BM.GPU.MI300X.8"),
+				Gpus:           lo.ToPtr(8),
+				GpuDescription: lo.ToPtr("AMD MI300X"),
+			},
+			want: AmdGpuResourceName,
+		},
+		{
+			name: "a10 uses nvidia gpu resource",
+			shape: ocicore.Shape{
+				Shape:          lo.ToPtr("VM.GPU.A10.2"),
+				Gpus:           lo.ToPtr(2),
+				GpuDescription: lo.ToPtr("NVIDIA A10"),
+			},
+			want: NvidiaGpuResourceName,
+		},
+		{
+			name: "h100 uses nvidia gpu resource",
+			shape: ocicore.Shape{
+				Shape:          lo.ToPtr("BM.GPU.H100.8"),
+				Gpus:           lo.ToPtr(8),
+				GpuDescription: lo.ToPtr("NVIDIA H100"),
+			},
+			want: NvidiaGpuResourceName,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, gpuResourceName(&tt.shape))
+		})
+	}
 }
 
 // instance_type.go tests
@@ -1243,6 +1368,41 @@ func TestCalculatePrices(t *testing.T) {
 			wantOk:    true,
 			wantPrice: 1.04, // 8*0.05 + 64*0.01 + 0 = 1.04
 		},
+		{
+			name: "nvidia gpu shape uses gpu unit price",
+			shape: &ocicore.Shape{
+				Shape: lo.ToPtr("VM.GPU.A10.2"),
+				Gpus:  lo.ToPtr(2),
+			},
+			ocpu:      24,
+			mem:       240,
+			baseline:  ociv1beta1.BASELINE_1_8,
+			wantOk:    true,
+			wantPrice: 4,
+		},
+		{
+			name: "amd gpu shape uses gpu unit price",
+			shape: &ocicore.Shape{
+				Shape: lo.ToPtr("BM.GPU.MI300X.8"),
+				Gpus:  lo.ToPtr(8),
+			},
+			ocpu:      224,
+			mem:       2048,
+			baseline:  ociv1beta1.BASELINE_1_2,
+			wantOk:    true,
+			wantPrice: 48,
+		},
+		{
+			name: "gpu shape price falls back without gpu count",
+			shape: &ocicore.Shape{
+				Shape: lo.ToPtr("VM.GPU.A10.2"),
+			},
+			ocpu:      24,
+			mem:       240,
+			baseline:  ociv1beta1.BASELINE_1_1,
+			wantOk:    true,
+			wantPrice: 48,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1252,6 +1412,11 @@ func TestCalculatePrices(t *testing.T) {
 				p.shapeToPrice = map[string]*ShapePriceInfo{
 					"VM.STANDARD.E4.FLEX": {ShapeName: lo.ToPtr("VM.Standard.E4.Flex"), OcpuUnitPrice: 0.05,
 						MemoryUnitPrice: 0.01, DiskUnitPrice: 0.1},
+					"VM.GPU.A10.2": {ShapeName: lo.ToPtr("VM.GPU.A10.2"), OcpuUnitPrice: 2},
+					"BM.GPU.MI300X.8": {
+						ShapeName:     lo.ToPtr("BM.GPU.MI300X.8"),
+						OcpuUnitPrice: 6,
+					},
 				}
 			})
 			price, ok := p.calculatePrices(tt.shape, tt.ocpu, tt.mem, tt.baseline)
