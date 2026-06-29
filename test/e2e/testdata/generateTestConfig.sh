@@ -114,39 +114,57 @@ OUT_NPN_JSON="e2e_test_config_npn.json"
 OUT_FLANNEL_VALUES="e2e_test_helm_values_flannel.yaml"
 OUT_NPN_VALUES="e2e_test_helm_values_npn.yaml"
 
-# Read OS filters and target cluster k8s version (from FLANNEL cluster) using the flannel config template
-IMAGE_OS=$(jq -r '.OCINodeClass.ImageOsFilter // empty' "$TEMPLATE_FLANNEL_JSON")
-IMAGE_OS_VERSION=$(jq -r '.OCINodeClass.ImageOsVersionFilter // empty' "$TEMPLATE_FLANNEL_JSON")
-TARGET_K8S_VERSION=$(oci ce cluster get "${CE_ENDPOINT_ARGS[@]}" --cluster-id "$FLANNEL_CLUSTER_ID" --query 'data."kubernetes-version"' --raw-output)
-
-# Parse major/minor from version (strip leading v)
-VER_TRIMMED="${TARGET_K8S_VERSION#v}"
-MAJOR="${VER_TRIMMED%%.*}"
-REST="${VER_TRIMMED#*.}"
-MINOR="${REST%%.*}"
-
-# Build compute list args against pre-baked image compartment (like provider)
-COMPUTE_LIST_ARGS=(--compartment-id "$PREBAKED_IMAGE_COMPARTMENT_ID" --all)
-if [[ -n "$IMAGE_OS" ]]; then COMPUTE_LIST_ARGS+=(--operating-system "$IMAGE_OS"); fi
-if [[ -n "$IMAGE_OS_VERSION" ]]; then COMPUTE_LIST_ARGS+=(--operating-system-version "$IMAGE_OS_VERSION"); fi
-
 IMAGE_ID=""
 IMAGE_DISPLAY_NAME=""
 DRIFT_IMAGE_ID=""
 DRIFT_IMAGE_DISPLAY_NAME=""
 
+FLANNEL_IMAGE_ID=""
+FLANNEL_IMAGE_DISPLAY_NAME=""
+FLANNEL_DRIFT_IMAGE_ID=""
+FLANNEL_DRIFT_IMAGE_DISPLAY_NAME=""
+NPN_IMAGE_ID=""
+NPN_IMAGE_DISPLAY_NAME=""
+NPN_DRIFT_IMAGE_ID=""
+NPN_DRIFT_IMAGE_DISPLAY_NAME=""
+
 # New template variables: Ubuntu/custom image ID lookup by display name
 UBUNTU_IMAGE_ID=""
 CUSTOM_IMAGE_ID=""
 
-# Build candidate list sorted by:
-#  1) minimal version skew score (as in kubeletVersionCompatibleScore)
-#  2) newest time-created first (stable tie-breaking like provider's pre-sort)
-if [[ -n "$MAJOR" && -n "$MINOR" ]]; then
-  CANDIDATES_JSON=$(
-    oci compute image list "${COMPUTE_LIST_ARGS[@]}" --query 'data' |
-    jq -r --arg maj "$MAJOR" --arg min "$MINOR" '
-      # Exclude ARM/aarch64 images; e2e currently targets amd64/x86_64 only
+resolve_oke_image_for_shape() {
+  local cluster_name="$1"
+  local cluster_id="$2"
+  local template_json="$3"
+  local expected_shape="${4:-${E2E_EXPECTED_SHAPE:-}}"
+
+  local image_os image_os_version target_k8s_version ver_trimmed major rest minor
+  if [[ -z "$expected_shape" ]]; then
+    expected_shape=$(jq -r '.NodePool.InstanceTypes[-1] // empty' "$template_json")
+  fi
+  : "${expected_shape:?expected shape is required; set E2E_EXPECTED_SHAPE or define NodePool.InstanceTypes in $template_json}"
+
+  image_os=$(jq -r '.OCINodeClass.ImageOsFilter // empty' "$template_json")
+  image_os_version=$(jq -r '.OCINodeClass.ImageOsVersionFilter // empty' "$template_json")
+  target_k8s_version=$(oci ce cluster get "${CE_ENDPOINT_ARGS[@]}" --cluster-id "$cluster_id" \
+    --query 'data."kubernetes-version"' --raw-output)
+
+  ver_trimmed="${target_k8s_version#v}"
+  major="${ver_trimmed%%.*}"
+  rest="${ver_trimmed#*.}"
+  minor="${rest%%.*}"
+
+  echo "Resolving OKE image for ${cluster_name}: clusterVersion=${target_k8s_version}, expectedShape=${expected_shape}, os=${image_os}, osVersion=${image_os_version}" >&2
+
+  local compute_list_args=(--compartment-id "$PREBAKED_IMAGE_COMPARTMENT_ID" --all)
+  if [[ -n "$image_os" ]]; then compute_list_args+=(--operating-system "$image_os"); fi
+  if [[ -n "$image_os_version" ]]; then compute_list_args+=(--operating-system-version "$image_os_version"); fi
+
+  local candidates_json compatible_json row image_id image_name image_score image_shapes
+  candidates_json=$(
+    oci compute image list "${compute_list_args[@]}" --query 'data' |
+    jq -r --arg maj "$major" --arg min "$minor" '
+      # Exclude ARM/aarch64 images; e2e currently targets amd64/x86_64 only.
       map(select(."display-name" | test("aarch64"; "i") | not)) |
       map(select(."freeform-tags".k8s_version != null)) |
       map(
@@ -168,33 +186,56 @@ if [[ -n "$MAJOR" && -n "$MINOR" ]]; then
           tc: $tc
         }
       ) |
-      map(select(.score >= 0))
+      map(select(.score >= 0)) |
+      sort_by(.score, - .tc)
     '
   )
 
-  # Primary = best candidate (min score, newest time-created on tie)
-  PRIMARY_MIN_SCORE=$(printf '%s' "$CANDIDATES_JSON" | jq -r 'if length>0 then (min_by(.score).score) else empty end')
-  if [[ -n "$PRIMARY_MIN_SCORE" ]]; then
-    IMAGE_ID=$(printf '%s' "$CANDIDATES_JSON" | jq -r --argjson min "$PRIMARY_MIN_SCORE" '([ .[] | select(.score == $min) ] | max_by(.tc)).id')
-    IMAGE_DISPLAY_NAME=$(printf '%s' "$CANDIDATES_JSON" | jq -r --argjson min "$PRIMARY_MIN_SCORE" '([ .[] | select(.score == $min) ] | max_by(.tc))."display-name"')
-    IMAGE_DISPLAY_NAME=${IMAGE_DISPLAY_NAME%%$'\t'*}
-    PRIMARY_SCORE="$PRIMARY_MIN_SCORE"
+  compatible_json="[]"
+  while IFS= read -r row; do
+    image_id=$(jq -r '.id' <<<"$row")
+    image_name=$(jq -r '."display-name"' <<<"$row")
+    image_score=$(jq -r '.score' <<<"$row")
+    image_shapes=$(oci compute image-shape-compatibility-entry list --image-id "$image_id" --all \
+      --query 'data[].shape')
+
+    if jq -e --arg shape "$expected_shape" 'index($shape) != null' >/dev/null <<<"$image_shapes"; then
+      echo "Selected-compatible-candidate ${cluster_name}: image=${image_id}, displayName=${image_name}, score=${image_score}" >&2
+      compatible_json=$(jq --argjson img "$row" '. + [$img]' <<<"$compatible_json")
+    else
+      echo "Skipped-incompatible-candidate ${cluster_name}: image=${image_id}, displayName=${image_name}, missingShape=${expected_shape}, score=${image_score}" >&2
+    fi
+  done < <(jq -c '.[]' <<<"$candidates_json")
+
+  if [[ "$(jq -r 'length' <<<"$compatible_json")" == "0" ]]; then
+    echo "No OKE image candidates for ${cluster_name} support ${expected_shape}" >&2
+    return 1
   fi
 
-  # Drift selection: choose next compatible minimal score greater than primary (e.g., previous minor), newest on tie
-  if [[ -n "$IMAGE_ID" ]]; then
-    DRIFT_MIN_SCORE=$(printf '%s' "$CANDIDATES_JSON" | jq -r --arg primary "$IMAGE_ID" --argjson ps "${PRIMARY_SCORE:-0}" '
-      [ .[] | select(.score > $ps and .id != $primary) ] as $rest |
-      if ($rest|length)>0 then ($rest | min_by(.score).score) else empty end')
-    if [[ -n "$DRIFT_MIN_SCORE" ]]; then
-      DRIFT_IMAGE_ID=$(printf '%s' "$CANDIDATES_JSON" | jq -r --arg primary "$IMAGE_ID" --argjson ds "$DRIFT_MIN_SCORE" '
-        [ .[] | select(.score == $ds and .id != $primary) ] | max_by(.tc).id')
-      DRIFT_IMAGE_DISPLAY_NAME=$(printf '%s' "$CANDIDATES_JSON" | jq -r --arg primary "$IMAGE_ID" --argjson ds "$DRIFT_MIN_SCORE" '
-        [ .[] | select(.score == $ds and .id != $primary) ] | max_by(.tc)."display-name"')
-      DRIFT_IMAGE_DISPLAY_NAME=${DRIFT_IMAGE_DISPLAY_NAME%%$'\t'*}
-    fi
-  fi
-fi
+  jq -r '
+    .[0] as $primary |
+    ([ .[] | select(.score > $primary.score and .id != $primary.id) ] | first) as $drift |
+    [
+      $primary.id,
+      $primary."display-name",
+      ($drift.id // ""),
+      ($drift."display-name" // "")
+    ] | @tsv
+  ' <<<"$compatible_json"
+}
+
+IFS=$'\t' read -r FLANNEL_IMAGE_ID FLANNEL_IMAGE_DISPLAY_NAME FLANNEL_DRIFT_IMAGE_ID FLANNEL_DRIFT_IMAGE_DISPLAY_NAME < <(
+  resolve_oke_image_for_shape "$FLANNEL_CLUSTER_NAME" "$FLANNEL_CLUSTER_ID" "$TEMPLATE_FLANNEL_JSON"
+)
+IFS=$'\t' read -r NPN_IMAGE_ID NPN_IMAGE_DISPLAY_NAME NPN_DRIFT_IMAGE_ID NPN_DRIFT_IMAGE_DISPLAY_NAME < <(
+  resolve_oke_image_for_shape "$NPN_CLUSTER_NAME" "$NPN_CLUSTER_ID" "$TEMPLATE_NPN_JSON"
+)
+
+# Keep legacy variable names for shared logging and any non-cluster-specific placeholders.
+IMAGE_ID="$FLANNEL_IMAGE_ID"
+IMAGE_DISPLAY_NAME="$FLANNEL_IMAGE_DISPLAY_NAME"
+DRIFT_IMAGE_ID="$FLANNEL_DRIFT_IMAGE_ID"
+DRIFT_IMAGE_DISPLAY_NAME="$FLANNEL_DRIFT_IMAGE_DISPLAY_NAME"
 
 # Resolve Ubuntu/custom image IDs by image display-name
 # - Ubuntu images live in PREBAKED_IMAGE_COMPARTMENT_ID_UBUNTU
@@ -214,6 +255,14 @@ echo "IMAGE_ID: ${IMAGE_ID:-}"
 echo "IMAGE_DISPLAY_NAME: ${IMAGE_DISPLAY_NAME:-}"
 echo "DRIFT_IMAGE_ID: ${DRIFT_IMAGE_ID:-}"
 echo "DRIFT_IMAGE_DISPLAY_NAME: ${DRIFT_IMAGE_DISPLAY_NAME:-}"
+echo "FLANNEL_IMAGE_ID: ${FLANNEL_IMAGE_ID:-}"
+echo "FLANNEL_IMAGE_DISPLAY_NAME: ${FLANNEL_IMAGE_DISPLAY_NAME:-}"
+echo "FLANNEL_DRIFT_IMAGE_ID: ${FLANNEL_DRIFT_IMAGE_ID:-}"
+echo "FLANNEL_DRIFT_IMAGE_DISPLAY_NAME: ${FLANNEL_DRIFT_IMAGE_DISPLAY_NAME:-}"
+echo "NPN_IMAGE_ID: ${NPN_IMAGE_ID:-}"
+echo "NPN_IMAGE_DISPLAY_NAME: ${NPN_IMAGE_DISPLAY_NAME:-}"
+echo "NPN_DRIFT_IMAGE_ID: ${NPN_DRIFT_IMAGE_ID:-}"
+echo "NPN_DRIFT_IMAGE_DISPLAY_NAME: ${NPN_DRIFT_IMAGE_DISPLAY_NAME:-}"
 echo "UBUNTU_IMAGE_ID: ${UBUNTU_IMAGE_ID:-}"
 echo "CUSTOM_IMAGE_ID: ${CUSTOM_IMAGE_ID:-}"
 
@@ -234,7 +283,7 @@ VARIABLES=(
   "CAPACITY_RESERVATION1_NAME" "CAPACITY_RESERVATION2_NAME" "CAPACITY_RESERVATION1_ID" "CAPACITY_RESERVATION2_ID"
   "COMPUTE_CLUSTER_NAME" "COMPUTE_CLUSTER_ID"
   "NPN_KUBEAPI_ENDPOINT_IP" "FLANNEL_KUBEAPI_ENDPOINT_IP"
-  "IMAGE_ID" "IMAGE_DISPLAY_NAME" "DRIFT_IMAGE_ID" "DRIFT_IMAGE_DISPLAY_NAME" "OCI_AUTH_METHOD_FOR_TEST" "IMAGE_TAG"
+  "OCI_AUTH_METHOD_FOR_TEST" "IMAGE_TAG"
   "IMAGE_REGISTRY" "IMAGE_REPOSITORY_NAME" "TEST_DEPLOYMENT_IMAGE" "SSH_PUB_KEY"
   "UBUNTU_IMAGE_ID" "CUSTOM_IMAGE_ID"
 )
@@ -248,10 +297,28 @@ sedit() {
   fi
 }
 
+replace_var() {
+  local file="$1"
+  local var="$2"
+  local val="$3"
+
+  [ -n "$val" ] || return 0
+  sedit "s/VAR_${var}/$(printf '%s' "$val" | sed -e 's/[\/&]/\\&/g')/g" "$file"
+}
+
+replace_var "$OUT_FLANNEL_JSON" "IMAGE_ID" "$FLANNEL_IMAGE_ID"
+replace_var "$OUT_FLANNEL_JSON" "IMAGE_DISPLAY_NAME" "$FLANNEL_IMAGE_DISPLAY_NAME"
+replace_var "$OUT_FLANNEL_JSON" "DRIFT_IMAGE_ID" "$FLANNEL_DRIFT_IMAGE_ID"
+replace_var "$OUT_FLANNEL_JSON" "DRIFT_IMAGE_DISPLAY_NAME" "$FLANNEL_DRIFT_IMAGE_DISPLAY_NAME"
+replace_var "$OUT_NPN_JSON" "IMAGE_ID" "$NPN_IMAGE_ID"
+replace_var "$OUT_NPN_JSON" "IMAGE_DISPLAY_NAME" "$NPN_IMAGE_DISPLAY_NAME"
+replace_var "$OUT_NPN_JSON" "DRIFT_IMAGE_ID" "$NPN_DRIFT_IMAGE_ID"
+replace_var "$OUT_NPN_JSON" "DRIFT_IMAGE_DISPLAY_NAME" "$NPN_DRIFT_IMAGE_DISPLAY_NAME"
+
 for file in "${FILES[@]}"; do
   for VAR in "${VARIABLES[@]}"; do
     val="${!VAR:-}"
     [ -n "$val" ] || continue
-    sedit "s/VAR_${VAR}/$(printf '%s' "$val" | sed -e 's/[\/&]/\\&/g')/g" "$file"
+    replace_var "$file" "$VAR" "$val"
   done
 done
