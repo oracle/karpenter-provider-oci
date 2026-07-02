@@ -43,6 +43,7 @@ import (
 
 const (
 	minK8sMinorForMultiFlex = 31
+	spotPriceFactor         = 0.5
 
 	MemoryAvailable = "memory.available"
 	NodeFSAvailable = "nodefs.available"
@@ -385,22 +386,22 @@ func isValidOcpuOptions(ocpuOptions *ocicore.ShapeOcpuOptions) bool {
 	return ocpuOptions != nil && ocpuOptions.Min != nil
 }
 
-func makeOnDemandOffering(shapeName string, ads []string, price float64, available bool,
+func makeOnDemandOffering(shapeName string, ads []string, basePrice float64, available bool,
 	computeClusterRestrictFunc func(string, string) bool) []*cloudprovider.Offering {
 	return lo.Map(ads, func(ad string, _ int) *cloudprovider.Offering {
-		return makeOffering(ad, price, corev1.CapacityTypeOnDemand,
+		return makeOffering(ad, basePrice, corev1.CapacityTypeOnDemand,
 			available && computeClusterRestrictFunc(shapeName, ad))
 	})
 }
 
-func makeSpotOffering(ads []string, base float64) []*cloudprovider.Offering {
+func makeSpotOffering(ads []string, basePrice float64) []*cloudprovider.Offering {
 	return lo.Map(ads, func(ad string, _ int) *cloudprovider.Offering {
-		return makeOffering(ad, base*0.5, corev1.CapacityTypeSpot, true)
+		return makeOffering(ad, basePrice*spotPriceFactor, corev1.CapacityTypeSpot, true)
 	})
 }
 
 // makeReservedOffering can produce many offering, based on combination of capReservation, ad or individual fd or mix.
-func makeReservedOffering(price float64,
+func makeReservedOffering(basePrice float64,
 	capResAdMap map[capacityreservation.CapacityReserveIdAndAd]map[string]capacityreservation.ShapeAvailability,
 ) []*cloudprovider.Offering {
 	offerings := make([]*cloudprovider.Offering, 0)
@@ -413,7 +414,7 @@ func makeReservedOffering(price float64,
 				avail = 0
 			}
 
-			offering := makeOffering(capResIdAndAd.Ad, price*0.85, corev1.CapacityTypeReserved, avail != 0)
+			offering := makeOffering(capResIdAndAd.Ad, basePrice, corev1.CapacityTypeReserved, avail != 0)
 			offering.ReservationCapacity = avail
 
 			// extend scheduling requirement
@@ -819,7 +820,7 @@ func (p *DefaultProvider) setOfferings(ctx context.Context, it *OciInstanceType,
 	// Preemptible capacity does not support burstable instances, nor capacity reservation.
 	if available && isPreemptible && !IsBurstableShape(it) && len(capResAdMap) == 0 {
 		if hasPreemptibleTaints {
-			offerings = append(offerings, makeSpotOffering(shapeAndAd.Ads, basePrice*0.5)...)
+			offerings = append(offerings, makeSpotOffering(shapeAndAd.Ads, basePrice)...)
 		} else {
 			log.FromContext(ctx).V(1).Info(fmt.Sprintf("Missing '%s' taints for preemptible shape '%s'",
 				PreemptibleTaintKey, *shapeAndAd.Shape.Shape))
@@ -828,7 +829,7 @@ func (p *DefaultProvider) setOfferings(ctx context.Context, it *OciInstanceType,
 
 	if available && capResAdMap != nil {
 		// be noticed capacity reservation does not support burstable && preemptible
-		offerings = append(offerings, makeReservedOffering(basePrice*0.85, capResAdMap)...)
+		offerings = append(offerings, makeReservedOffering(basePrice, capResAdMap)...)
 	}
 
 	it.Offerings = append(it.Offerings, offerings...)

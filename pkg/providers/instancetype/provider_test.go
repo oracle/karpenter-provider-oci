@@ -55,6 +55,25 @@ var (
 	ipV6DualStack   = []network.IpFamily{network.IPv4, network.IPv6}
 )
 
+type fakeCapacityReservationProvider struct {
+	results []capacityreservation.ResolveResult
+	err     error
+}
+
+func (f *fakeCapacityReservationProvider) ResolveCapacityReservations(context.Context,
+	[]*ociv1beta1.CapacityReservationConfig,
+) ([]capacityreservation.ResolveResult, error) {
+	return f.results, f.err
+}
+
+func (f *fakeCapacityReservationProvider) MarkCapacityReservationUsed(*ocicore.Instance) {}
+
+func (f *fakeCapacityReservationProvider) MarkCapacityReservationReleased(*ocicore.Instance) {}
+
+func (f *fakeCapacityReservationProvider) SyncCapacityReservation(context.Context, string) error {
+	return nil
+}
+
 func TestCalculatePrices_BaselinesAndPrefix(t *testing.T) {
 	p := &DefaultProvider{
 		shapeToPrice: map[string]*ShapePriceInfo{
@@ -1012,11 +1031,13 @@ func TestMakeReservedOffering(t *testing.T) {
 				Ad:          "tenancy:PHX-AD-1"},
 		},
 	}
-	offerings := makeReservedOffering(1.0, capResAdMap)
+	const basePrice = 1.0
+	offerings := makeReservedOffering(basePrice, capResAdMap)
 	// Should include at least one offering for AD-1 with capacity 6 (10-4)
 	found := false
 	for _, o := range offerings {
 		if o.Requirements.Get(v1.LabelTopologyZone).Any() == "PHX-AD-1" && o.ReservationCapacity == 6 {
+			assert.Equal(t, basePrice, o.Price)
 			found = true
 			break
 		}
@@ -1222,6 +1243,105 @@ func TestSetOfferings_PreemptibleSpotAdded(t *testing.T) {
 	}
 	assert.True(t, hasOnDemand, "expected on-demand offerings")
 	assert.True(t, hasSpot, "expected spot offerings for preemptible non-burstable shape")
+}
+
+func TestSetOfferings_Prices(t *testing.T) {
+	const (
+		ad        = "tenancy:PHX-AD-1"
+		basePrice = 1.0
+		shapeName = "VM.Standard.E4.Flex"
+	)
+
+	reservedNodeClass := &ociv1beta1.OCINodeClass{
+		Spec: ociv1beta1.OCINodeClassSpec{
+			CapacityReservationConfigs: []*ociv1beta1.CapacityReservationConfig{{
+				CapacityReservationId: lo.ToPtr("ocid1.capacityreservation.oc1..reserved"),
+			}},
+		},
+	}
+	reservedProvider := &fakeCapacityReservationProvider{
+		results: []capacityreservation.ResolveResult{{
+			Ocid: "ocid1.capacityreservation.oc1..reserved",
+			Ad:   ad,
+			ShapeAvailabilities: []capacityreservation.ShapeAvailability{{
+				Ad: ad, Shape: shapeName, Total: 1,
+			}},
+		}},
+	}
+
+	tests := []struct {
+		name              string
+		preemptible       bool
+		taints            []v1.Taint
+		nodeClass         *ociv1beta1.OCINodeClass
+		reservationSource capacityreservation.Provider
+		wantPrices        map[string]float64
+	}{
+		{
+			name:      "on-demand uses base price",
+			nodeClass: &ociv1beta1.OCINodeClass{},
+			wantPrices: map[string]float64{
+				corev1.CapacityTypeOnDemand: basePrice,
+			},
+		},
+		{
+			name:        "spot applies discount once",
+			preemptible: true,
+			taints:      []v1.Taint{preemptibleTaintNoSchedule},
+			nodeClass:   &ociv1beta1.OCINodeClass{},
+			wantPrices: map[string]float64{
+				corev1.CapacityTypeOnDemand: basePrice,
+				corev1.CapacityTypeSpot:     basePrice * spotPriceFactor,
+			},
+		},
+		{
+			name:        "spot is absent without required taint",
+			preemptible: true,
+			nodeClass:   &ociv1beta1.OCINodeClass{},
+			wantPrices: map[string]float64{
+				corev1.CapacityTypeOnDemand: basePrice,
+			},
+		},
+		{
+			name:              "reserved running instance uses base price",
+			nodeClass:         reservedNodeClass,
+			reservationSource: reservedProvider,
+			wantPrices: map[string]float64{
+				corev1.CapacityTypeOnDemand: basePrice,
+				corev1.CapacityTypeReserved: basePrice,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			preemptibleShapes := PreemptibleShapes{}
+			if tt.preemptible {
+				preemptibleShapes["VM.STANDARD.E4"] = "VM.Standard.E4"
+			}
+			p := &DefaultProvider{
+				preemptibleShapes:           preemptibleShapes,
+				capacityReservationProvider: tt.reservationSource,
+			}
+			it := &OciInstanceType{
+				InstanceType: cloudprovider.InstanceType{Name: shapeName},
+				Shape:        shapeName,
+			}
+			shapeAndAd := &ShapeAndAd{
+				Shape: &ocicore.Shape{Shape: lo.ToPtr(shapeName)},
+				Ads:   []string{ad},
+			}
+
+			err := p.setOfferings(context.Background(), it, tt.nodeClass, shapeAndAd, true, basePrice, tt.taints)
+			require.NoError(t, err)
+			require.Len(t, it.Offerings, len(tt.wantPrices))
+
+			gotPrices := lo.SliceToMap(it.Offerings, func(offering *cloudprovider.Offering) (string, float64) {
+				return offering.CapacityType(), offering.Price
+			})
+			assert.Equal(t, tt.wantPrices, gotPrices)
+		})
+	}
 }
 
 func TestSetOfferings_NoPreemptibleSpotIfTaintMissing(t *testing.T) {
