@@ -310,11 +310,7 @@ func (p *DefaultProvider) decorateInstanceType(ctx context.Context, it *OciInsta
 	setCapacity(it, shape, ocpu, memoryInGbs, nodeClass, p.ipFamilies)
 	setOverhead(it, shape, ocpu, memoryInGbs, nodeClass)
 
-	basePrice, priceAvailable := func() (float64, bool) {
-		p.lock.RLock()
-		defer p.lock.RUnlock()
-		return p.calculatePrices(shape, ocpu, memoryInGbs, cpuBaseline)
-	}()
+	basePrice, priceAvailable := p.calculatePrices(shape, ocpu, memoryInGbs, cpuBaseline)
 
 	vnicAvailable := true
 	secondVnicsNum := -1
@@ -734,7 +730,7 @@ func (p *DefaultProvider) reloadConfigFile(ctx context.Context) error {
 
 func (p *DefaultProvider) calculatePrices(shape *ocicore.Shape, ocpu float32, gbs float32,
 	baseline ociv1beta1.BaselineOcpuUtilization) (float64, bool) {
-	// this method is called within a read lock
+	// The caller must hold p.lock for reading.
 	shapeUp := strings.ToUpper(*shape.Shape)
 	si, ok := p.shapeToPrice[shapeUp]
 	if !ok {
@@ -772,6 +768,7 @@ func (p *DefaultProvider) calculatePrices(shape *ocicore.Shape, ocpu float32, gb
 }
 
 func (p *DefaultProvider) isPreemptibleShape(shape string) bool {
+	// The caller must hold p.lock for reading.
 	shapeUp := strings.ToUpper(shape)
 	if _, ok := p.preemptibleShapes[shapeUp]; ok {
 		return true
@@ -788,6 +785,7 @@ func (p *DefaultProvider) isPreemptibleShape(shape string) bool {
 
 // isComputeClusterSupportedShape checks if a shape is supported for compute clusters
 func (p *DefaultProvider) isComputeClusterSupportedShape(shapeName string) bool {
+	// The caller must hold p.lock for reading.
 	// https://docs.oracle.com/en-us/iaas/Content/Compute/Tasks/compute-clusters.htm
 	return lo.Contains(p.computeClusterShapes, strings.ToUpper(shapeName))
 }
@@ -803,11 +801,7 @@ func (p *DefaultProvider) setOfferings(ctx context.Context, it *OciInstanceType,
 	offerings := makeOnDemandOffering(*shapeAndAd.Shape.Shape, shapeAndAd.Ads, basePrice, available,
 		placementRestrictFunc)
 
-	isPreemptible := func() bool {
-		p.lock.RLock()
-		defer p.lock.RUnlock()
-		return p.isPreemptibleShape(*shapeAndAd.Shape.Shape)
-	}()
+	isPreemptible := p.isPreemptibleShape(*shapeAndAd.Shape.Shape)
 
 	var capResAdMap map[capacityreservation.CapacityReserveIdAndAd]map[string]capacityreservation.ShapeAvailability
 	if len(nodeClass.Spec.CapacityReservationConfigs) > 0 {
@@ -910,6 +904,7 @@ func (p *DefaultProvider) ListInstanceTypes(ctx context.Context,
 	nodeClass *ociv1beta1.OCINodeClass, taints []v1.Taint) ([]*OciInstanceType, error) {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
+	// Helpers in this call tree read provider state under this lock and must not reacquire it.
 
 	// for each shape, we return offering
 	instanceTypes := make([]*OciInstanceType, 0)

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/coreos/go-semver/semver"
@@ -643,6 +644,101 @@ func TestCalculatePricesAndOfferings(t *testing.T) {
 	}
 	assert.GreaterOrEqual(t, onDemand, 2)
 	assert.GreaterOrEqual(t, spot, 2)
+}
+
+func TestDecorateInstanceType_DoesNotDeadlock(t *testing.T) {
+	p := &DefaultProvider{
+		shapeToPrice: map[string]*ShapePriceInfo{
+			"VM.STANDARD.E4.FLEX": {
+				ShapeName: lo.ToPtr("VM.Standard.E4.Flex"), OcpuUnitPrice: 0.05,
+				MemoryUnitPrice: 0.01, DiskUnitPrice: 0,
+			},
+		},
+		preemptibleShapes: PreemptibleShapes{"VM.STANDARD.E4": "VM.Standard.E4"},
+	}
+	shape := &ocicore.Shape{
+		Shape:       lo.ToPtr("VM.Standard.E4.Flex"),
+		Ocpus:       lo.ToPtr(float32(4)),
+		MemoryInGBs: lo.ToPtr(float32(32)),
+		BillingType: ocicore.ShapeBillingTypePaid,
+	}
+	shapeAndAd := &ShapeAndAd{Shape: shape, Ads: []string{"tenancy:PHX-AD-1"}}
+	nodeClass := &ociv1beta1.OCINodeClass{
+		Spec: ociv1beta1.OCINodeClassSpec{
+			VolumeConfig: &ociv1beta1.VolumeConfig{
+				BootVolumeConfig: &ociv1beta1.BootVolumeConfig{},
+			},
+			NetworkConfig: &ociv1beta1.NetworkConfig{},
+		},
+	}
+	instanceType := &OciInstanceType{
+		InstanceType: cloudprovider.InstanceType{Name: "VM.Standard.E4.Flex"},
+		Shape:        "VM.Standard.E4.Flex",
+		Ocpu:         lo.ToPtr(float32(4)),
+		MemoryInGbs:  lo.ToPtr(float32(32)),
+	}
+
+	// Model ListInstanceTypes holding its outer read lock while a refresher queues for the write lock.
+	p.lock.RLock()
+	outerLockHeld := true
+	defer func() {
+		if outerLockHeld {
+			p.lock.RUnlock()
+		}
+	}()
+
+	writerDone := make(chan struct{})
+	writerAcquired := false
+	go func() {
+		p.lock.Lock()
+		writerAcquired = true
+		p.lock.Unlock()
+		close(writerDone)
+	}()
+
+	writerQueued := false
+	queueDeadline := time.Now().Add(time.Second)
+	for time.Now().Before(queueDeadline) {
+		if !p.lock.TryRLock() {
+			writerQueued = true
+			break
+		}
+		p.lock.RUnlock()
+		time.Sleep(time.Millisecond)
+	}
+	if !writerQueued {
+		p.lock.RUnlock()
+		outerLockHeld = false
+		<-writerDone
+		t.Fatal("writer did not queue behind the outer read lock")
+	}
+
+	decorateDone := make(chan error, 1)
+	go func() {
+		decorateDone <- p.decorateInstanceType(context.Background(), instanceType, nodeClass, shapeAndAd,
+			[]v1.Taint{preemptibleTaintNoSchedule})
+	}()
+
+	select {
+	case err := <-decorateDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		// Release and drain all blocked goroutines before failing the test.
+		p.lock.RUnlock()
+		outerLockHeld = false
+		<-writerDone
+		<-decorateDone
+		t.Fatal("decorateInstanceType recursively acquired the provider read lock")
+	}
+
+	p.lock.RUnlock()
+	outerLockHeld = false
+	select {
+	case <-writerDone:
+		assert.True(t, writerAcquired)
+	case <-time.After(time.Second):
+		t.Fatal("queued writer did not complete after releasing the outer read lock")
+	}
 }
 
 func TestFinalizeRequirements(t *testing.T) {
