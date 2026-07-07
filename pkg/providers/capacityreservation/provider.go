@@ -134,7 +134,7 @@ func (p *DefaultProvider) getUsage(capacityReservationId string) *Usage {
 
 // SyncCapacityReservation offer ability to evict capacity reservation in case it is out of sync
 func (p *DefaultProvider) SyncCapacityReservation(ctx context.Context, capacityReservationId string) error {
-	p.capResCache.Evict(ctx, capacityReservationId)
+	p.capResCache.Evict(capacityReservationId)
 	_, err := p.getCapacityReservation(ctx, capacityReservationId)
 	if err != nil {
 		return err

@@ -61,6 +61,9 @@ const (
 	nodeClassClusterCompartmentID = "ocid1.compartment.oc1..cluster123"
 	sharedCompartmentID           = "ocid1.compartment.oc1..shared"
 	testImageID                   = "ocid1.image.oc1..test"
+	testShapeA                    = "shape-a"
+	testCompartmentA              = "ocid1.compartment.oc1..a"
+	testCompartmentB              = "ocid1.compartment.oc1..b"
 )
 
 var (
@@ -76,6 +79,7 @@ var _ = Describe("CloudProvider Integration Tests", func() {
 
 	BeforeEach(func() {
 		ipV4Family := []network.IpFamily{network.IPv4}
+		driftCaches := instance.NewDriftCaches()
 
 		ociTestNodeClass = fakes.CreateOciNodeClassWithMinimumReconcilableSetting(nodeClassClusterCompartmentID)
 		imageProvider := lo.Must(image.NewProvider(ctx, nil, fakes.NewFakeComputeClient(nodeClassClusterCompartmentID),
@@ -83,7 +87,7 @@ var _ = Describe("CloudProvider Integration Tests", func() {
 		kmsProvider := lo.Must(kms.NewProvider(ctx, nodeClassClusterCompartmentID, fakes.NewDummyConfigurationProvider()))
 		kmsProvider.SetKmsClient("https://testvalut-management.kms.us-ashburn-1.oraclecloud.com", fakes.NewFakeKmsClient())
 		networkProvider := lo.Must(network.NewProvider(ctx, nodeClassClusterCompartmentID,
-			false, ipV4Family, fakes.NewFakeVirtualNetworkClient()))
+			false, ipV4Family, fakes.NewFakeVirtualNetworkClient(), driftCaches.VnicCache()))
 		crProvider := capacityreservation.NewProvider(ctx,
 			fakes.NewFakeCapacityReservationClient(nodeClassClusterCompartmentID), nodeClassClusterCompartmentID)
 		computeClusterProvider := computecluster.NewProvider(ctx,
@@ -110,7 +114,8 @@ var _ = Describe("CloudProvider Integration Tests", func() {
 				},
 			},
 		})
-		bsProvider := lo.Must(blockstorage.NewProvider(ctx, &fakes.FakeBlockstorage{}))
+		bsProvider := lo.Must(blockstorage.NewProvider(ctx, &fakes.FakeBlockstorage{},
+			driftCaches.BootVolumeCache()))
 		ociNodeClassController = lo.Must(nodeclasses.NewController(ctx, k8sClient,
 			&fakes.FakeEventRecorder{},
 			imageProvider,
@@ -223,14 +228,14 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 			nodePool := testNodePool(uniqueName("nodepool"), nodeClass.Name)
 			cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
 				kubeClient:    newFakeKubeClient(nodeClass, nodePool),
-				instanceTypes: []*instancetype.OciInstanceType{testInstanceType("shape-a", 10)},
+				instanceTypes: []*instancetype.OciInstanceType{testInstanceType(testShapeA, 10)},
 				repairPolicies: []cloudprovider.RepairPolicy{
 					{ConditionType: corev1.NodeReady},
 				},
 			})
 
 			resolvedPool, err := cp.resolveNodePoolFromInstance(context.Background(),
-				testInstanceWithShape("shape-a", nodePool.Name))
+				testInstanceWithShape(testShapeA, nodePool.Name))
 			Expect(err).ToNot(HaveOccurred())
 			Expect(resolvedPool.Name).To(Equal(nodePool.Name))
 
@@ -244,7 +249,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 			instanceTypes, err := cp.GetInstanceTypes(context.Background(), nodePool)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(instanceTypes).To(HaveLen(1))
-			Expect(instanceTypes[0].Name).To(Equal("shape-a"))
+			Expect(instanceTypes[0].Name).To(Equal(testShapeA))
 
 			Expect(cp.RepairPolicies()).To(HaveLen(1))
 			Expect(cp.Name()).To(Equal("oci"))
@@ -265,27 +270,27 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 			nodePool = testNodePool(uniqueName("nodepool"), nodeClass.Name)
 			cp = newUnitTestCloudProvider(unitTestCloudProviderOptions{
 				kubeClient:    newFakeKubeClient(nodeClass, nodePool),
-				instanceTypes: []*instancetype.OciInstanceType{testInstanceType("shape-a", 10)},
+				instanceTypes: []*instancetype.OciInstanceType{testInstanceType(testShapeA, 10)},
 			})
 		})
 
 		It("should hydrate nodeclaims from active instances", func() {
 			cp.instanceProvider = &FakeInstanceProvider{
 				GetInstanceFn: func(context.Context, string) (*instance.InstanceInfo, error) {
-					return &instance.InstanceInfo{Instance: testInstanceWithShape("shape-a", nodePool.Name)}, nil
+					return &instance.InstanceInfo{Instance: testInstanceWithShape(testShapeA, nodePool.Name)}, nil
 				},
 			}
 
 			nodeClaim, err := cp.Get(context.Background(), "ocid1.instance.oc1..get")
 			Expect(err).ToNot(HaveOccurred())
 			Expect(nodeClaim.Labels[v1.NodePoolLabelKey]).To(Equal(nodePool.Name))
-			Expect(nodeClaim.Labels[corev1.LabelInstanceTypeStable]).To(Equal("shape-a"))
+			Expect(nodeClaim.Labels[corev1.LabelInstanceTypeStable]).To(Equal(testShapeA))
 		})
 
 		It("should treat terminated instances as not found", func() {
 			cp.instanceProvider = &FakeInstanceProvider{
 				GetInstanceFn: func(context.Context, string) (*instance.InstanceInfo, error) {
-					i := testInstanceWithShape("shape-a", nodePool.Name)
+					i := testInstanceWithShape(testShapeA, nodePool.Name)
 					i.LifecycleState = ocicore.InstanceLifecycleStateTerminated
 					return &instance.InstanceInfo{Instance: i}, nil
 				},
@@ -352,7 +357,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 		It("should forget terminated instances", func() {
 			cp.instanceProvider = &FakeInstanceProvider{
 				GetInstanceFn: func(context.Context, string) (*instance.InstanceInfo, error) {
-					i := testInstanceWithShape("shape-a", "pool-a")
+					i := testInstanceWithShape(testShapeA, "pool-a")
 					i.LifecycleState = ocicore.InstanceLifecycleStateTerminated
 					i.Id = lo.ToPtr(nodeClaim.Status.ProviderID)
 					return &instance.InstanceInfo{Instance: i}, nil
@@ -367,7 +372,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 		It("should surface delete not found as already deleted", func() {
 			cp.instanceProvider = &FakeInstanceProvider{
 				GetInstanceFn: func(context.Context, string) (*instance.InstanceInfo, error) {
-					i := testInstanceWithShape("shape-a", "pool-a")
+					i := testInstanceWithShape(testShapeA, "pool-a")
 					i.Id = lo.ToPtr(nodeClaim.Status.ProviderID)
 					return &instance.InstanceInfo{Instance: i}, nil
 				},
@@ -383,7 +388,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 		It("should release capacity reservations after a successful delete", func() {
 			cp.instanceProvider = &FakeInstanceProvider{
 				GetInstanceFn: func(context.Context, string) (*instance.InstanceInfo, error) {
-					i := testInstanceWithShape("shape-a", "pool-a")
+					i := testInstanceWithShape(testShapeA, "pool-a")
 					i.Id = lo.ToPtr(nodeClaim.Status.ProviderID)
 					i.CapacityReservationId = lo.ToPtr("ocid1.capacityreservation.oc1..abc")
 					return &instance.InstanceInfo{Instance: i}, nil
@@ -399,7 +404,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 			deleteCalled := false
 			cp.instanceProvider = &FakeInstanceProvider{
 				GetInstanceFn: func(context.Context, string) (*instance.InstanceInfo, error) {
-					i := testInstanceWithShape("shape-a", "pool-a")
+					i := testInstanceWithShape(testShapeA, "pool-a")
 					i.Id = lo.ToPtr(nodeClaim.Status.ProviderID)
 					i.FreeformTags[instance.NodePoolUIDOciFreeFormTagKey] = "other-nodepool-uid"
 					return &instance.InstanceInfo{Instance: i}, nil
@@ -417,24 +422,31 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 
 	Context("List", func() {
 		It("should list instances only for in-use nodeclasses and filter unknown nodepools", func() {
-			usedNodeClass := testReadyNodeClass(uniqueName("used"))
-			compartmentA := "ocid1.compartment.oc1..a"
-			usedNodeClass.Spec.NodeCompartmentId = &compartmentA
+			compartmentA := testCompartmentA
+			usedNodeClassA := testReadyNodeClass(uniqueName("used-a"))
+			usedNodeClassA.Spec.NodeCompartmentId = &compartmentA
+			compartmentB := testCompartmentB
+			usedNodeClassB := testReadyNodeClass(uniqueName("used-b"))
+			usedNodeClassB.Spec.NodeCompartmentId = &compartmentB
 			unusedNodeClass := testReadyNodeClass(uniqueName("unused"))
-			compartmentB := "ocid1.compartment.oc1..b"
-			unusedNodeClass.Spec.NodeCompartmentId = &compartmentB
+			unusedCompartment := sharedCompartmentID
+			unusedNodeClass.Spec.NodeCompartmentId = &unusedCompartment
 
-			nodePool := testNodePool(uniqueName("nodepool"), usedNodeClass.Name)
+			nodePoolA := testNodePool(uniqueName("nodepool-a"), usedNodeClassA.Name)
+			nodePoolB := testNodePool(uniqueName("nodepool-b"), usedNodeClassB.Name)
 			var listedCompartments []string
+			listCalls := 0
 			cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
-				kubeClient:    newFakeKubeClient(usedNodeClass, unusedNodeClass, nodePool),
-				instanceTypes: []*instancetype.OciInstanceType{testInstanceType("shape-a", 10)},
+				kubeClient: newFakeKubeClient(
+					usedNodeClassA, usedNodeClassB, unusedNodeClass, nodePoolA, nodePoolB),
+				instanceTypes: []*instancetype.OciInstanceType{testInstanceType(testShapeA, 10)},
 				instanceProvider: &FakeInstanceProvider{
-					ListInstancesFn: func(_ context.Context, compartmentID string) ([]*ocicore.Instance, error) {
-						listedCompartments = append(listedCompartments, compartmentID)
+					ListInstancesFn: func(_ context.Context, compartmentIDs []string) ([]*ocicore.Instance, error) {
+						listCalls++
+						listedCompartments = append(listedCompartments, compartmentIDs...)
 						return []*ocicore.Instance{
-							testInstanceWithShape("shape-a", nodePool.Name),
-							testInstanceWithShape("shape-a", "unknown-pool"),
+							testInstanceWithShape(testShapeA, nodePoolA.Name),
+							testInstanceWithShape(testShapeA, "unknown-pool"),
 						}, nil
 					},
 				},
@@ -442,9 +454,11 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 
 			nodeClaims, err := cp.List(context.Background())
 			Expect(err).ToNot(HaveOccurred())
-			Expect(listedCompartments).To(Equal([]string{compartmentA}))
+			Expect(listCalls).To(Equal(1))
+			Expect(listedCompartments).To(ConsistOf(compartmentA, compartmentB))
+			Expect(listedCompartments).ToNot(ContainElement(unusedCompartment))
 			Expect(nodeClaims).To(HaveLen(1))
-			Expect(nodeClaims[0].Labels[v1.NodePoolLabelKey]).To(Equal(nodePool.Name))
+			Expect(nodeClaims[0].Labels[v1.NodePoolLabelKey]).To(Equal(nodePoolA.Name))
 		})
 
 		It("should include instances when nodepool name and UID match", func() {
@@ -452,14 +466,14 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 			compartment := sharedCompartmentID
 			nodeClass.Spec.NodeCompartmentId = &compartment
 			nodePool := testNodePoolWithUID(uniqueName("nodepool"), nodeClass.Name)
-			localInstance := testInstanceWithShape("shape-a", nodePool.Name)
+			localInstance := testInstanceWithShape(testShapeA, nodePool.Name)
 			localInstance.FreeformTags[instance.NodePoolUIDOciFreeFormTagKey] = string(nodePool.UID)
 
 			cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
 				kubeClient:    newFakeKubeClient(nodeClass, nodePool),
-				instanceTypes: []*instancetype.OciInstanceType{testInstanceType("shape-a", 10)},
+				instanceTypes: []*instancetype.OciInstanceType{testInstanceType(testShapeA, 10)},
 				instanceProvider: &FakeInstanceProvider{
-					ListInstancesFn: func(_ context.Context, _ string) ([]*ocicore.Instance, error) {
+					ListInstancesFn: func(_ context.Context, _ []string) ([]*ocicore.Instance, error) {
 						return []*ocicore.Instance{localInstance}, nil
 					},
 				},
@@ -476,14 +490,14 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 			compartment := sharedCompartmentID
 			nodeClass.Spec.NodeCompartmentId = &compartment
 			nodePool := testNodePoolWithUID(uniqueName("nodepool"), nodeClass.Name)
-			foreignInstance := testInstanceWithShape("shape-a", nodePool.Name)
+			foreignInstance := testInstanceWithShape(testShapeA, nodePool.Name)
 			foreignInstance.FreeformTags[instance.NodePoolUIDOciFreeFormTagKey] = "other-nodepool-uid"
 
 			cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
 				kubeClient:    newFakeKubeClient(nodeClass, nodePool),
-				instanceTypes: []*instancetype.OciInstanceType{testInstanceType("shape-a", 10)},
+				instanceTypes: []*instancetype.OciInstanceType{testInstanceType(testShapeA, 10)},
 				instanceProvider: &FakeInstanceProvider{
-					ListInstancesFn: func(_ context.Context, _ string) ([]*ocicore.Instance, error) {
+					ListInstancesFn: func(_ context.Context, _ []string) ([]*ocicore.Instance, error) {
 						return []*ocicore.Instance{foreignInstance}, nil
 					},
 				},
@@ -500,19 +514,19 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 			nodeClass.Spec.NodeCompartmentId = &compartment
 			nodePool := testNodePool("pool-a", nodeClass.Name)
 
-			ownedLegacy := testInstanceWithShape("shape-a", nodePool.Name)
+			ownedLegacy := testInstanceWithShape(testShapeA, nodePool.Name)
 			ownedLegacy.Id = lo.ToPtr("ocid1.instance.oc1..legacy-owned")
 			delete(ownedLegacy.FreeformTags, instance.NodePoolUIDOciFreeFormTagKey)
 
-			unownedLegacy := testInstanceWithShape("shape-a", nodePool.Name)
+			unownedLegacy := testInstanceWithShape(testShapeA, nodePool.Name)
 			unownedLegacy.Id = lo.ToPtr("ocid1.instance.oc1..legacy-unowned")
 			delete(unownedLegacy.FreeformTags, instance.NodePoolUIDOciFreeFormTagKey)
 
 			cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
 				kubeClient:    newFakeKubeClient(nodeClass, nodePool),
-				instanceTypes: []*instancetype.OciInstanceType{testInstanceType("shape-a", 10)},
+				instanceTypes: []*instancetype.OciInstanceType{testInstanceType(testShapeA, 10)},
 				instanceProvider: &FakeInstanceProvider{
-					ListInstancesFn: func(_ context.Context, _ string) ([]*ocicore.Instance, error) {
+					ListInstancesFn: func(_ context.Context, _ []string) ([]*ocicore.Instance, error) {
 						return []*ocicore.Instance{ownedLegacy, unownedLegacy}, nil
 					},
 				},
@@ -521,6 +535,30 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 			nodeClaims, err := cp.List(context.Background())
 			Expect(err).ToNot(HaveOccurred())
 			Expect(nodeClaims).To(HaveLen(2))
+		})
+
+		It("should surface an aggregate compartment listing failure", func() {
+			compartmentA := testCompartmentA
+			compartmentB := testCompartmentB
+			nodeClassA := testReadyNodeClass(uniqueName("used-a"))
+			nodeClassA.Spec.NodeCompartmentId = &compartmentA
+			nodeClassB := testReadyNodeClass(uniqueName("used-b"))
+			nodeClassB.Spec.NodeCompartmentId = &compartmentB
+			nodePoolA := testNodePool(uniqueName("nodepool-a"), nodeClassA.Name)
+			nodePoolB := testNodePool(uniqueName("nodepool-b"), nodeClassB.Name)
+
+			cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
+				kubeClient: newFakeKubeClient(nodeClassA, nodeClassB, nodePoolA, nodePoolB),
+				instanceProvider: &FakeInstanceProvider{
+					ListInstancesFn: func(_ context.Context, compartmentIDs []string) ([]*ocicore.Instance, error) {
+						Expect(compartmentIDs).To(ConsistOf(compartmentA, compartmentB))
+						return nil, errors.New("list failed")
+					},
+				},
+			})
+
+			_, err := cp.List(context.Background())
+			Expect(err).To(MatchError("list failed"))
 		})
 
 	})
@@ -541,7 +579,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 			nodePool = testNodePoolWithUID("pool-a", nodeClass.Name)
 			kubeClient = newFakeKubeClient(nodeClass, nodePool)
 			nodeClaim = testNodeClaim(nodeClass.Name)
-			instanceA = testInstanceType("shape-a", 10)
+			instanceA = testInstanceType(testShapeA, 10)
 			instanceB = testInstanceType("shape-b", 20)
 			imageResult = testImageResolveResult(testImageID)
 		})
@@ -580,7 +618,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 				imageProvider: &FakeImageProvider{
 					ResolveImageForShapeFn: func(_ context.Context, _ *v1beta1.ImageConfig,
 						shape string) (*image.ImageResolveResult, error) {
-						if shape == "shape-a" {
+						if shape == testShapeA {
 							return nil, errors.New("shape-a image unavailable")
 						}
 						return imageResult, nil
@@ -853,16 +891,16 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 		It("should report instance drift for image mismatches", func() {
 			nodeClass := testReadyNodeClass(uniqueName("drift"))
 			desiredImage := &ocicore.Image{Id: lo.ToPtr("ocid1.image.oc1..desired")}
-			instanceType := testInstanceType("shape-a", 10)
-			instanceInfo := testInstanceWithShape("shape-a", "pool-a")
-			instanceInfo.CompartmentId = lo.ToPtr("ocid1.compartment.oc1..a")
+			instanceType := testInstanceType(testShapeA, 10)
+			instanceInfo := testInstanceWithShape(testShapeA, "pool-a")
+			instanceInfo.CompartmentId = lo.ToPtr(testCompartmentA)
 			instanceInfo.SourceDetails = ocicore.InstanceSourceViaImageDetails{
 				ImageId: lo.ToPtr("ocid1.image.oc1..actual"),
 			}
 
 			reason, err := IsInstanceDrifted(&InstanceDesiredState{
 				InstanceType:    instanceType,
-				CompartmentOcid: "ocid1.compartment.oc1..a",
+				CompartmentOcid: testCompartmentA,
 				Image:           desiredImage,
 				NodeClass:       nodeClass,
 			}, instanceInfo)
@@ -873,7 +911,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 		It("should return capacity reservation mismatch during drift checks when reservation config is removed", func() {
 			nodeClass := testReadyNodeClass(uniqueName("drift-nodeclass"))
 			nodeClaim := testNodeClaim(nodeClass.Name)
-			nodeClaim.Labels[corev1.LabelInstanceTypeStable] = "shape-a"
+			nodeClaim.Labels[corev1.LabelInstanceTypeStable] = testShapeA
 			nodeClaim.Spec.Requirements = append(nodeClaim.Spec.Requirements, v1.NodeSelectorRequirementWithMinValues{
 				Key:      v1beta1.ReservationIDLabel,
 				Operator: corev1.NodeSelectorOpIn,
@@ -882,7 +920,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 
 			cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
 				kubeClient:    newFakeKubeClient(nodeClass),
-				instanceTypes: []*instancetype.OciInstanceType{testInstanceType("shape-a", 10)},
+				instanceTypes: []*instancetype.OciInstanceType{testInstanceType(testShapeA, 10)},
 				imageProvider: &FakeImageProvider{
 					ResolveImageForShapeFn: func(_ context.Context, _ *v1beta1.ImageConfig,
 						_ string) (*image.ImageResolveResult, error) {
@@ -891,7 +929,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 				},
 				instanceProvider: &FakeInstanceProvider{
 					GetInstanceCompartmentFn: func(*v1beta1.OCINodeClass) string {
-						return "ocid1.compartment.oc1..a"
+						return testCompartmentA
 					},
 				},
 			})
@@ -948,6 +986,7 @@ type unitTestCloudProviderOptions struct {
 	instanceProvider            instance.Provider
 	placementProvider           placement.Provider
 	capacityReservationProvider capacityreservation.Provider
+	blockStorageProvider        blockstorage.Provider
 	npnProvider                 npn.Provider
 	repairPolicies              []cloudprovider.RepairPolicy
 	enableServiceLimitFallback  bool
@@ -974,6 +1013,7 @@ func newUnitTestCloudProvider(opts unitTestCloudProviderOptions) *CloudProvider 
 		instanceProvider:            &FakeInstanceProvider{},
 		placementProvider:           &FakePlacementProvider{},
 		capacityReservationProvider: &FakeCapacityReservationProvider{},
+		blockStorageProvider:        &FakeBlockStorageProvider{},
 		npnProvider:                 &FakeNpnProvider{},
 		repairPolicies:              opts.repairPolicies,
 		enableServiceLimitFallback:  opts.enableServiceLimitFallback,
@@ -996,6 +1036,9 @@ func newUnitTestCloudProvider(opts unitTestCloudProviderOptions) *CloudProvider 
 	}
 	if opts.capacityReservationProvider != nil {
 		cp.capacityReservationProvider = opts.capacityReservationProvider
+	}
+	if opts.blockStorageProvider != nil {
+		cp.blockStorageProvider = opts.blockStorageProvider
 	}
 	if opts.npnProvider != nil {
 		cp.npnProvider = opts.npnProvider

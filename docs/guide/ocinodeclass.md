@@ -52,6 +52,7 @@ KPO combines the `OCINodeClass` with a Karpenter `NodePool` during provisioning.
 - `spec.capacityReservationConfigs`, `spec.clusterPlacementGroupConfigs`, and `spec.computeClusterConfig` are mutually exclusive. 
 - Resource selector fields such as `subnetFilter`, `networkSecurityGroupFilter`, and reservation or placement-group filters must resolve to exactly one OCI resource.
 - `spec.preBootstrapInitScript` and `spec.postBootstrapInitScript` must contain base64-encoded scripts.
+- KPO does not guarantee drift detection for changes made directly in OCI outside Karpenter.
 
 ## Status and troubleshooting
 

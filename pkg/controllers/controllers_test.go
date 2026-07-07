@@ -18,6 +18,7 @@ import (
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/computecluster"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/identity"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/image"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/instance"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/kms"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/network"
 	"github.com/samber/lo"
@@ -36,6 +37,7 @@ func TestControllers(t *testing.T) {
 var _ = Describe("OCINodeClass Reconciler", func() {
 	It("should create new controllers successfully", func() {
 		ctx := options.ToContext(context.TODO(), &options.Options{})
+		driftCaches := instance.NewDriftCaches()
 
 		nodeClassClusterCompartmentId := "ocid1.compartment.oc1..cluster123"
 
@@ -46,7 +48,8 @@ var _ = Describe("OCINodeClass Reconciler", func() {
 		kmsProvider.SetKmsClient("https://testvalut-management.kms.us-ashburn-1.oraclecloud.com", fakes.NewFakeKmsClient())
 
 		networkProvider := lo.Must(network.NewProvider(ctx, nodeClassClusterCompartmentId,
-			false, []network.IpFamily{network.IPv4}, fakes.NewFakeVirtualNetworkClient()))
+			false, []network.IpFamily{network.IPv4}, fakes.NewFakeVirtualNetworkClient(),
+			driftCaches.VnicCache()))
 		crProvider := capacityreservation.NewProvider(ctx,
 			fakes.NewFakeCapacityReservationClient(nodeClassClusterCompartmentId), nodeClassClusterCompartmentId)
 		computeClusterProvider := computecluster.NewProvider(ctx,

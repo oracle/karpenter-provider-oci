@@ -36,6 +36,7 @@ var (
 
 	InvalidSubnetConfigError = errors.New("define either ocid or subnet selector")
 	InvalidNsgConfigError    = errors.New("define either networkSecurityGroup ids or networkSecurityGroup selectors")
+	errVnicCacheRequired     = errors.New("VNIC cache is required")
 
 	AdSubnetError                      = errors.New("ad local subnet is not supported")
 	NoSecondaryVnicConfigError         = errors.New("no secondaryVnicConfigs found")
@@ -65,7 +66,11 @@ type DefaultProvider struct {
 }
 
 func NewProvider(ctx context.Context, clusterVcnCompartmentId string, npnCluster bool,
-	ipFamilies []IpFamily, vcnClient oci.VirtualNetworkClient) (*DefaultProvider, error) {
+	ipFamilies []IpFamily, vcnClient oci.VirtualNetworkClient,
+	vnicCache *cache.GetOrLoadCache[*ocicore.Vnic]) (*DefaultProvider, error) {
+	if vnicCache == nil {
+		return nil, errVnicCacheRequired
+	}
 	p := &DefaultProvider{
 		clusterVcnCompartmentId: clusterVcnCompartmentId,
 		npnCluster:              npnCluster,
@@ -77,7 +82,7 @@ func NewProvider(ctx context.Context, clusterVcnCompartmentId string, npnCluster
 
 		nsgCache:         cache.NewDefaultGetOrLoadCache[*ocicore.NetworkSecurityGroup](),
 		nsgSelectorCache: cache.NewDefaultGetOrLoadCache[[]*ocicore.NetworkSecurityGroup](),
-		vnicCache:        cache.NewDefaultGetOrLoadCache[*ocicore.Vnic](),
+		vnicCache:        vnicCache,
 	}
 
 	return p, nil
@@ -500,8 +505,10 @@ func (p *DefaultProvider) listAndFilterNsgs(ctx context.Context, req ocicore.Lis
 }
 
 func (p *DefaultProvider) GetVnic(ctx context.Context, vnicOcid string) (*ocicore.Vnic, error) {
-	p.vnicCache.Evict(ctx, vnicOcid)
-	return p.GetVnicCached(ctx, vnicOcid)
+	return p.vnicCache.Refresh(ctx, vnicOcid,
+		func(ctx context.Context, _ string) (*ocicore.Vnic, error) {
+			return p.getVnicImpl(ctx, vnicOcid)
+		})
 }
 
 func (p *DefaultProvider) getVnicImpl(ctx context.Context, vnicOcid string) (*ocicore.Vnic, error) {
@@ -517,9 +524,10 @@ func (p *DefaultProvider) getVnicImpl(ctx context.Context, vnicOcid string) (*oc
 }
 
 func (p *DefaultProvider) GetVnicCached(ctx context.Context, vnicOcid string) (*ocicore.Vnic, error) {
-	return p.vnicCache.GetOrLoad(ctx, vnicOcid, func(ctx context.Context, key string) (*ocicore.Vnic, error) {
-		return p.getVnicImpl(ctx, key)
-	})
+	return p.vnicCache.GetOrLoad(ctx, vnicOcid,
+		func(ctx context.Context, _ string) (*ocicore.Vnic, error) {
+			return p.getVnicImpl(ctx, vnicOcid)
+		})
 }
 
 func strPtrToStr(strValue *string) string {

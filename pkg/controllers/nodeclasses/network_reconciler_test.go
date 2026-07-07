@@ -11,6 +11,7 @@ import (
 	"github.com/awslabs/operatorpkg/status"
 	"github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/fakes"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/instance"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/network"
 	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,6 +26,7 @@ var networkController *Controller
 
 var _ = Describe("Network Reconciler", func() {
 	BeforeEach(func() {
+		driftCaches := instance.NewDriftCaches()
 		networkTestNodeClass = fakes.CreateBasicOciNodeClass()
 		networkTestNodeClass.Spec.NetworkConfig.SecondaryVnicConfigs = []*v1beta1.SecondaryVnicConfig{
 			{
@@ -41,7 +43,7 @@ var _ = Describe("Network Reconciler", func() {
 
 		vcnClient := fakes.NewFakeVirtualNetworkClient()
 		networkProvider := lo.Must(network.NewProvider(ctx, "clusterVcnCompartmentId",
-			true, []network.IpFamily{network.IPv4}, vcnClient))
+			true, []network.IpFamily{network.IPv4}, vcnClient, driftCaches.VnicCache()))
 
 		networkController = &Controller{
 			Client:   k8sClient,

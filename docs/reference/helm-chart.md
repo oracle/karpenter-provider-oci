@@ -74,6 +74,7 @@ A Helm chart for Karpenter provider OCI
 | settings.batchIdleDuration | string | `"1s"` | The maximum amount of time with no new ending pods that if exceeded ends the current batching window. If pods arrive faster than this time, the batching window will be extended up to the maxDuration. If they arrive slower, the pods will be batched separately. |
 | settings.batchMaxDuration | string | `"10s"` | The maximum length of a batch window. The longer this is, the more pods we can consider for provisioning at one time which usually results in fewer but larger nodes. |
 | settings.clusterCompartmentId | string | `""` | [required] Cluster compartment OCID. |
+| settings.enableUnavailableOfferingsOnServiceLimitExceeded | bool | `false` | When true, OCI LimitExceeded and QuotaExceeded failures mark the offering unavailable. Disabled by default. |
 | settings.featureGates | object | `{"nodeOverlay":false,"nodeRepair":false,"spotToSpotConsolidation":false,"staticCapacity":false}` | Feature Gate configuration values. Feature Gates will follow the same graduation process and requirements as feature gates in Kubernetes. More information here https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#feature-gates-for-alpha-or-beta-features |
 | settings.featureGates.nodeOverlay | bool | `false` | nodeOverlay is ALPHA and is disabled by default. Setting this to true will enable nodeOverlay. |
 | settings.featureGates.nodeRepair | bool | `false` | nodeRepair is ALPHA and is disabled by default. Setting this to true will enable node repair. |
@@ -89,7 +90,6 @@ A Helm chart for Karpenter provider OCI
 | settings.rateLimiter.qpsRead | float | `0` | Read QPS for the OCI client-side rate limiter. 0 uses the built-in default. |
 | settings.rateLimiter.qpsWrite | float | `0` | Write QPS for the OCI client-side rate limiter. 0 uses the built-in default. |
 | settings.unavailableOfferingsTTLSeconds | int | `180` | How long, in seconds, an offering observed to be out of host capacity is treated as unavailable before Karpenter retries it. Lower values retry exhausted offerings sooner; higher values reduce repeated launch attempts (and OCI throttling) against capacity that is unlikely to recover quickly. Set to 0 to disable the unavailable-offerings cache entirely, in which case offerings are never marked unavailable and Karpenter does not route around capacity-exhausted offerings. |
-| settings.enableUnavailableOfferingsOnServiceLimitExceeded | bool | `false` | When true, OCI LimitExceeded and QuotaExceeded failures mark the offering unavailable. Disabled by default. |
 | settings.vcnCompartmentId | string | `""` | [required] Cluster's VCN compartment OCID. |
 | strategy | object | `{"rollingUpdate":{"maxUnavailable":1}}` | Strategy for updating the pod. |
 | terminationGracePeriodSeconds | string | `nil` | Override the default termination grace period for the pod. |
@@ -97,3 +97,4 @@ A Helm chart for Karpenter provider OCI
 | topologySpreadConstraints | list | `[{"maxSkew":1,"topologyKey":"topology.kubernetes.io/zone","whenUnsatisfiable":"DoNotSchedule"}]` | Topology spread constraints to increase the controller resilience by distributing pods across the cluster zones. If an explicit label selector is not provided one will be created from the pod selector labels. |
 | volumeMounts | list | `[]` | Additional volume mounts on the controller container. |
 | volumes | list | `[]` | Additional volumes on the controller Deployment. |
+

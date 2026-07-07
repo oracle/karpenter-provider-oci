@@ -18,18 +18,30 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNewGetOrLoadCache(t *testing.T) {
-	defaultExp := 5 * time.Minute
-	cleanup := 10 * time.Minute
-	c := NewGetOrLoadCache[string](defaultExp, cleanup)
-	assert.NotNil(t, c)
-	assert.NotNil(t, c.cache)
+func TestNewNonExpiringGetOrLoadCache(t *testing.T) {
+	c := NewNonExpiringGetOrLoadCache[string]()
+	c.Set("key", "first")
+	c.Set("key", "second")
+
+	item, found := c.cache.Items()["key"]
+	assert.True(t, found)
+	assert.Equal(t, "second", item.Object)
+	assert.Equal(t, int64(0), item.Expiration)
 }
 
-func TestNewDefaultGetOrLoadCache(t *testing.T) {
-	c := NewDefaultGetOrLoadCache[string]()
-	assert.NotNil(t, c)
-	assert.NotNil(t, c.cache)
+func TestEvictMatching(t *testing.T) {
+	c := NewNonExpiringGetOrLoadCache[string]()
+	c.Set("instance-1", "one")
+	c.Set("instance-2", "two")
+
+	c.EvictMatching(func(key string) bool {
+		return key == "instance-2"
+	})
+
+	_, found := c.cache.Get("instance-1")
+	assert.True(t, found)
+	_, found = c.cache.Get("instance-2")
+	assert.False(t, found)
 }
 
 func TestGetOrLoad_HappyPath(t *testing.T) {
@@ -133,6 +145,31 @@ func TestGetOrLoad_Concurrent(t *testing.T) {
 	}
 }
 
+func TestRefresh(t *testing.T) {
+	c := NewNonExpiringGetOrLoadCache[string]()
+	ctx := context.Background()
+	c.Set("key", "old")
+
+	value, err := c.Refresh(ctx, "key", func(context.Context, string) (string, error) {
+		return "new", nil
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, "new", value)
+
+	expectedErr := errors.New("refresh failed")
+	_, err = c.Refresh(ctx, "key", func(context.Context, string) (string, error) {
+		return "", expectedErr
+	})
+	assert.ErrorIs(t, err, expectedErr)
+
+	value, err = c.GetOrLoad(ctx, "key", func(context.Context, string) (string, error) {
+		t.Fatal("preserved value should be served from cache")
+		return "", nil
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, "new", value)
+}
+
 func TestEvict(t *testing.T) {
 	c := NewDefaultGetOrLoadCache[string]()
 	ctx := context.Background()
@@ -151,7 +188,7 @@ func TestEvict(t *testing.T) {
 	assert.Equal(t, expected, val)
 
 	// Evict
-	c.Evict(ctx, key)
+	c.Evict(key)
 
 	// Next call should miss cache
 	loaderCalled := false
@@ -164,22 +201,23 @@ func TestEvict(t *testing.T) {
 	assert.Equal(t, "new-value", val2)
 }
 
-func TestMakeCompositeKey(t *testing.T) {
-	tests := []struct {
-		name     string
-		values   []string
-		expected string
-	}{
-		{"empty", []string{}, ""},
-		{"single", []string{"a"}, "a"},
-		{"multiple", []string{"a", "b", "c"}, "a|b|c"},
-		{"with empty", []string{"a", "", "c"}, "a||c"},
-	}
+func TestOnEvicted(t *testing.T) {
+	c := NewNonExpiringGetOrLoadCache[string]()
+	var evictedKeys []string
+	var evictedValues []string
+	c.OnEvicted(func(key, value string) {
+		evictedKeys = append(evictedKeys, key)
+		evictedValues = append(evictedValues, value)
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := MakeCompositeKey(tt.values...)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
+	c.Set("key", "first")
+	c.Set("key", "second")
+	assert.Empty(t, evictedKeys, "overwriting an entry must not invoke OnEvicted")
+
+	c.Evict("missing")
+	assert.Empty(t, evictedKeys, "evicting a missing entry must not invoke OnEvicted")
+
+	c.Evict("key")
+	assert.Equal(t, []string{"key"}, evictedKeys)
+	assert.Equal(t, []string{"second"}, evictedValues)
 }

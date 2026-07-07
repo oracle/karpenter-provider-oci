@@ -217,6 +217,12 @@ func TestProvider_GetInstanceCompartment(t *testing.T) {
 	}
 }
 
+func TestNewProviderRequiresDriftCaches(t *testing.T) {
+	_, err := NewProvider(context.Background(), nil, nil, "", nil, nil,
+		0, 0, false, 0, nil, false)
+	require.ErrorIs(t, err, errDriftCachesRequired)
+}
+
 func TestProvider_IsInstanceTerminated(t *testing.T) {
 	tests := []struct {
 		name string
@@ -599,131 +605,446 @@ func TestProvider_BuildCreateVnicDetails(t *testing.T) {
 	}
 }
 
-func TestProvider_Cached_Wrappers(t *testing.T) {
+func TestProvider_FreshReadFailuresPreserveCachedDriftValues(t *testing.T) {
+	ctx := context.Background()
+	failFreshReads := false
+	instanceDisplayName := "old"
+	vnicID := "vnic-1"
+	bootVolumeID := "boot-volume-1"
 	fc := &fakes.FakeCompute{}
-	// Provide canned responses via hooks
-	fc.OnGet = func(ctx context.Context, r ocicore.GetInstanceRequest) (ocicore.GetInstanceResponse, error) {
-		return ocicore.GetInstanceResponse{
-			Instance: ocicore.Instance{
-				Id:                 lo.ToPtr("ocid1.instance.oc1..xyz"),
-				DisplayName:        lo.ToPtr("inst1"),
-				AvailabilityDomain: lo.ToPtr("tenancy:PHX-AD-1"),
-				LifecycleState:     ocicore.InstanceLifecycleStateRunning,
-				SourceDetails:      ocicore.InstanceSourceViaImageDetails{ImageId: lo.ToPtr("ocid1.image.oc1..img")},
-			},
-			Etag: lo.ToPtr("etag-1"),
-		}, nil
-	}
-	fc.OnListVnics = func(ctx context.Context, r ocicore.ListVnicAttachmentsRequest) (
-		ocicore.ListVnicAttachmentsResponse, error) {
-		return ocicore.ListVnicAttachmentsResponse{
-			Items: []ocicore.VnicAttachment{{Id: lo.ToPtr("ocid1.vnicattach.oc1..1")}}}, nil
-	}
-	fc.OnListBoot = func(ctx context.Context, r ocicore.ListBootVolumeAttachmentsRequest) (
-		ocicore.ListBootVolumeAttachmentsResponse, error) {
-		return ocicore.ListBootVolumeAttachmentsResponse{
-			Items: []ocicore.BootVolumeAttachment{{Id: lo.ToPtr("ocid1.bootvolattach.oc1..1")}}}, nil
-	}
-
-	p := &DefaultProvider{
-		computeClient:      fc,
-		instanceCache:      cache.NewDefaultGetOrLoadCache[*InstanceInfo](),
-		vnicAttachCache:    cache.NewDefaultGetOrLoadCache[[]*ocicore.VnicAttachment](),
-		bootVolAttachCache: cache.NewDefaultGetOrLoadCache[[]*ocicore.BootVolumeAttachment](),
-		launchTimeoutVM:    10 * time.Minute,
-		launchTimeoutBM:    20 * time.Minute,
-	}
-
-	ctx := context.TODO()
-
-	// GetInstanceCached - invoke twice -> underlying GetInstance once
-	{
-		i1, err := p.GetInstanceCached(ctx, "ocid1.instance.oc1..xyz")
-		assert.NoError(t, err)
-		assert.Equal(t, "ocid1.instance.oc1..xyz", *i1.Id)
-
-		i2, err := p.GetInstanceCached(ctx, "ocid1.instance.oc1..xyz")
-		assert.NoError(t, err)
-		assert.Equal(t, "ocid1.instance.oc1..xyz", *i2.Id)
-
-		assert.Equal(t, 1, fc.GetCount.Get(), "expected GetInstance called once due to caching")
-	}
-
-	// ListInstanceVnicAttachmentsCached - invoke twice -> underlying list once
-	{
-		va1, err := p.ListInstanceVnicAttachmentsCached(ctx, "ocid1.compartment.oc1..c", "ocid1.instance.oc1..xyz")
-		assert.NoError(t, err)
-		assert.Len(t, va1, 1)
-
-		va2, err := p.ListInstanceVnicAttachmentsCached(ctx, "ocid1.compartment.oc1..c", "ocid1.instance.oc1..xyz")
-		assert.NoError(t, err)
-		assert.Len(t, va2, 1)
-
-		assert.Equal(t, 1, fc.ListVnicCount.Get(), "expected ListVnicAttachments called once due to caching")
-	}
-
-	// ListInstanceBootVolumeAttachmentsCached - invoke twice -> underlying list once
-	{
-		bv1, err := p.ListInstanceBootVolumeAttachmentsCached(ctx, "ocid1.compartment.oc1..c",
-			"ocid1.instance.oc1..xyz", "tenancy:PHX-AD-1")
-		assert.NoError(t, err)
-		assert.Len(t, bv1, 1)
-
-		bv2, err := p.ListInstanceBootVolumeAttachmentsCached(ctx, "ocid1.compartment.oc1..c",
-			"ocid1.instance.oc1..xyz", "tenancy:PHX-AD-1")
-		assert.NoError(t, err)
-		assert.Len(t, bv2, 1)
-
-		assert.Equal(t, 1, fc.ListBootCount.Get(), "expected ListBootVolumeAttachments called once due to caching")
-	}
-}
-
-func TestProvider_Get_List_Delete_WithFakeCompute(t *testing.T) {
-	// unified fake compute with hooks returning canned responses
-	fc := &fakes.FakeCompute{}
-	terminated := new(bool)
-	fc.OnGet = func(ctx context.Context, r ocicore.GetInstanceRequest) (ocicore.GetInstanceResponse, error) {
-		state := ocicore.InstanceLifecycleStateRunning
-		if *terminated && r.InstanceId != nil && *r.InstanceId == "ocid1.instance.oc1..xyz" {
-			state = ocicore.InstanceLifecycleStateTerminated
+	fc.OnGet = func(context.Context, ocicore.GetInstanceRequest) (ocicore.GetInstanceResponse, error) {
+		if failFreshReads {
+			return ocicore.GetInstanceResponse{}, errors.New("temporary instance read failure")
 		}
 		return ocicore.GetInstanceResponse{
 			Instance: ocicore.Instance{
-				Id:                 lo.ToPtr("ocid1.instance.oc1..xyz"),
-				DisplayName:        lo.ToPtr("inst1"),
-				AvailabilityDomain: lo.ToPtr("tenancy:PHX-AD-1"),
-				LifecycleState:     state,
-				SourceDetails:      ocicore.InstanceSourceViaImageDetails{ImageId: lo.ToPtr("ocid1.image.oc1..img")},
-				TimeCreated:        &common.SDKTime{Time: time.Now()},
+				Id:             lo.ToPtr("instance-1"),
+				DisplayName:    lo.ToPtr(instanceDisplayName),
+				LifecycleState: ocicore.InstanceLifecycleStateRunning,
 			},
 			Etag: lo.ToPtr("etag-1"),
 		}, nil
 	}
-	// In OnTerminate, flip the terminated switch
-	fc.OnTerminate = func(ctx context.Context, r ocicore.TerminateInstanceRequest) (
-		ocicore.TerminateInstanceResponse, error) {
-		*terminated = true
-		return ocicore.TerminateInstanceResponse{}, nil
-	}
-	// (No duplicate assignment here!)
-	fc.OnListVnics = func(ctx context.Context, r ocicore.ListVnicAttachmentsRequest) (
+	fc.OnListVnics = func(context.Context, ocicore.ListVnicAttachmentsRequest) (
 		ocicore.ListVnicAttachmentsResponse, error) {
-		return ocicore.ListVnicAttachmentsResponse{
-			Items: []ocicore.VnicAttachment{{Id: lo.ToPtr("ocid1.vnicattach.oc1..1")}},
-		}, nil
+		if failFreshReads {
+			return ocicore.ListVnicAttachmentsResponse{}, errors.New("temporary VNIC attachment read failure")
+		}
+		return ocicore.ListVnicAttachmentsResponse{Items: []ocicore.VnicAttachment{{
+			VnicId: lo.ToPtr(vnicID),
+		}}}, nil
 	}
-	fc.OnListBoot = func(ctx context.Context, r ocicore.ListBootVolumeAttachmentsRequest) (
+	fc.OnListBoot = func(context.Context, ocicore.ListBootVolumeAttachmentsRequest) (
 		ocicore.ListBootVolumeAttachmentsResponse, error) {
-		return ocicore.ListBootVolumeAttachmentsResponse{
-			Items: []ocicore.BootVolumeAttachment{{Id: lo.ToPtr("ocid1.bootvolattach.oc1..1")}},
-		}, nil
+		if failFreshReads {
+			return ocicore.ListBootVolumeAttachmentsResponse{}, errors.New("temporary boot attachment read failure")
+		}
+		return ocicore.ListBootVolumeAttachmentsResponse{Items: []ocicore.BootVolumeAttachment{{
+			BootVolumeId: lo.ToPtr(bootVolumeID),
+		}}}, nil
 	}
-	fc.OnListInstances = func(ctx context.Context, r ocicore.ListInstancesRequest) (ocicore.ListInstancesResponse, error) {
+
+	driftCaches := NewDriftCaches()
+	p := &DefaultProvider{
+		computeClient:      fc,
+		instanceCache:      driftCaches.instances,
+		vnicAttachCache:    driftCaches.vnicAttachments,
+		bootVolAttachCache: driftCaches.bootVolumeAttachments,
+	}
+
+	instanceInfo, err := p.GetInstanceCached(ctx, "instance-1")
+	require.NoError(t, err)
+	vnicAttachments, err := p.ListInstanceVnicAttachmentsCached(ctx, "compartment-1", "instance-1")
+	require.NoError(t, err)
+	bootAttachments, err := p.ListInstanceBootVolumeAttachmentsCached(ctx, "compartment-1", "instance-1", "ad-1")
+	require.NoError(t, err)
+	assert.Equal(t, "old", *instanceInfo.DisplayName)
+	assert.Equal(t, "vnic-1", *vnicAttachments[0].VnicId)
+	assert.Equal(t, "boot-volume-1", *bootAttachments[0].BootVolumeId)
+	assert.Equal(t, 1, fc.GetCount.Get())
+	assert.Equal(t, 1, fc.ListVnicCount.Get())
+	assert.Equal(t, 1, fc.ListBootCount.Get())
+	oldVnic := &ocicore.Vnic{Id: lo.ToPtr(vnicID)}
+	oldBootVolume := &ocicore.BootVolume{Id: lo.ToPtr(bootVolumeID)}
+	driftCaches.vnics.Set(vnicID, oldVnic)
+	driftCaches.bootVolumes.Set(bootVolumeID, oldBootVolume)
+
+	instanceDisplayName = "new"
+	vnicID = "vnic-2"
+	bootVolumeID = "boot-volume-2"
+	cachedInstance, err := p.GetInstanceCached(ctx, "instance-1")
+	require.NoError(t, err)
+	assert.Same(t, instanceInfo, cachedInstance)
+	cachedVnicAttachments, err := p.ListInstanceVnicAttachmentsCached(ctx, "compartment-1", "instance-1")
+	require.NoError(t, err)
+	assert.Equal(t, vnicAttachments, cachedVnicAttachments)
+	cachedBootAttachments, err := p.ListInstanceBootVolumeAttachmentsCached(ctx, "compartment-1", "instance-1", "ad-1")
+	require.NoError(t, err)
+	assert.Equal(t, bootAttachments, cachedBootAttachments)
+	assert.Equal(t, 1, fc.GetCount.Get())
+	assert.Equal(t, 1, fc.ListVnicCount.Get())
+	assert.Equal(t, 1, fc.ListBootCount.Get())
+
+	instanceInfo, err = p.GetInstance(ctx, "instance-1")
+	require.NoError(t, err)
+	vnicAttachments, err = p.ListInstanceVnicAttachments(ctx, "compartment-1", "instance-1")
+	require.NoError(t, err)
+	bootAttachments, err = p.ListInstanceBootVolumeAttachments(ctx, "compartment-1", "instance-1", "ad-1")
+	require.NoError(t, err)
+	assert.Equal(t, "new", *instanceInfo.DisplayName)
+	assert.Equal(t, "vnic-2", *vnicAttachments[0].VnicId)
+	assert.Equal(t, "boot-volume-2", *bootAttachments[0].BootVolumeId)
+	assert.Equal(t, 2, fc.GetCount.Get())
+	assert.Equal(t, 2, fc.ListVnicCount.Get())
+	assert.Equal(t, 2, fc.ListBootCount.Get())
+	assertCacheEntryReloads(t, ctx, driftCaches.vnics, "vnic-1", oldVnic)
+	assertCacheEntryReloads(t, ctx, driftCaches.bootVolumes, "boot-volume-1", oldBootVolume)
+	driftCaches.vnics.Evict("vnic-1")
+	driftCaches.bootVolumes.Evict("boot-volume-1")
+	newVnic := &ocicore.Vnic{Id: lo.ToPtr("vnic-2")}
+	newBootVolume := &ocicore.BootVolume{Id: lo.ToPtr("boot-volume-2")}
+	driftCaches.vnics.Set("vnic-2", newVnic)
+	driftCaches.bootVolumes.Set("boot-volume-2", newBootVolume)
+
+	failFreshReads = true
+	_, err = p.GetInstance(ctx, "instance-1")
+	require.Error(t, err)
+	_, err = p.ListInstanceVnicAttachments(ctx, "compartment-1", "instance-1")
+	require.Error(t, err)
+	_, err = p.ListInstanceBootVolumeAttachments(ctx, "compartment-1", "instance-1", "ad-1")
+	require.Error(t, err)
+	assert.Equal(t, 3, fc.GetCount.Get())
+	assert.Equal(t, 3, fc.ListVnicCount.Get())
+	assert.Equal(t, 3, fc.ListBootCount.Get())
+
+	cachedInstance, err = p.GetInstanceCached(ctx, "instance-1")
+	require.NoError(t, err)
+	assert.Same(t, instanceInfo, cachedInstance)
+	cachedVnicAttachments, err = p.ListInstanceVnicAttachmentsCached(ctx, "compartment-1", "instance-1")
+	require.NoError(t, err)
+	assert.Equal(t, vnicAttachments, cachedVnicAttachments)
+	cachedBootAttachments, err = p.ListInstanceBootVolumeAttachmentsCached(ctx, "compartment-1", "instance-1", "ad-1")
+	require.NoError(t, err)
+	assert.Equal(t, bootAttachments, cachedBootAttachments)
+	assertCacheEntryRetained(t, ctx, driftCaches.vnics, "vnic-2", newVnic)
+	assertCacheEntryRetained(t, ctx, driftCaches.bootVolumes, "boot-volume-2", newBootVolume)
+	assert.Equal(t, 3, fc.GetCount.Get())
+	assert.Equal(t, 3, fc.ListVnicCount.Get())
+	assert.Equal(t, 3, fc.ListBootCount.Get())
+}
+
+func TestProvider_InstanceReadsEvictGoneInstances(t *testing.T) {
+	testCases := []struct {
+		name       string
+		cachedRead bool
+		notFound   bool
+	}{
+		{name: "fresh NotFound", notFound: true},
+		{name: "fresh terminated"},
+		{name: "cached NotFound", cachedRead: true, notFound: true},
+		{name: "cached terminated", cachedRead: true},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx := context.Background()
+			const instanceID = "instance-gone"
+			driftCaches := NewDriftCaches()
+			entries := driftCacheEntriesForInstance(instanceID)
+			if testCase.cachedRead {
+				seedDriftChildCacheEntries(driftCaches, instanceID, entries)
+			} else {
+				seedDriftCacheEntries(driftCaches, instanceID)
+			}
+			fc := &fakes.FakeCompute{
+				OnGet: func(context.Context, ocicore.GetInstanceRequest) (ocicore.GetInstanceResponse, error) {
+					if testCase.notFound {
+						return ocicore.GetInstanceResponse{}, fakeServiceError{
+							httpStatus: http.StatusNotFound,
+							code:       "NotAuthorizedOrNotFound",
+							message:    "missing",
+						}
+					}
+					terminated := *entries.instance.Instance
+					terminated.LifecycleState = ocicore.InstanceLifecycleStateTerminated
+					return ocicore.GetInstanceResponse{Instance: terminated, Etag: lo.ToPtr("etag")}, nil
+				},
+			}
+			p := &DefaultProvider{
+				computeClient:      fc,
+				instanceCache:      driftCaches.instances,
+				vnicAttachCache:    driftCaches.vnicAttachments,
+				bootVolAttachCache: driftCaches.bootVolumeAttachments,
+			}
+
+			var err error
+			if testCase.cachedRead {
+				_, err = p.GetInstanceCached(ctx, instanceID)
+			} else {
+				_, err = p.GetInstance(ctx, instanceID)
+			}
+			if testCase.notFound {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assertDriftCacheEntriesEvicted(t, ctx, driftCaches, entries)
+		})
+	}
+}
+
+func TestProvider_DeleteInstanceEvictsDriftCaches(t *testing.T) {
+	testCases := []struct {
+		name              string
+		terminateNotFound bool
+	}{
+		{name: "terminate NotFound", terminateNotFound: true},
+		{name: "completed termination"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx := context.Background()
+			const instanceID = "instance-deleted"
+			driftCaches := NewDriftCaches()
+			entries := seedDriftCacheEntries(driftCaches, instanceID)
+			fc := &fakes.FakeCompute{
+				OnTerminate: func(context.Context, ocicore.TerminateInstanceRequest) (
+					ocicore.TerminateInstanceResponse, error) {
+					if testCase.terminateNotFound {
+						return ocicore.TerminateInstanceResponse{}, fakeServiceError{
+							httpStatus: http.StatusNotFound,
+							code:       "NotAuthorizedOrNotFound",
+							message:    "missing",
+						}
+					}
+					return ocicore.TerminateInstanceResponse{}, nil
+				},
+				OnGet: func(context.Context, ocicore.GetInstanceRequest) (ocicore.GetInstanceResponse, error) {
+					terminated := *entries.instance.Instance
+					terminated.LifecycleState = ocicore.InstanceLifecycleStateTerminated
+					return ocicore.GetInstanceResponse{Instance: terminated, Etag: lo.ToPtr("etag")}, nil
+				},
+			}
+			p := &DefaultProvider{
+				computeClient:      fc,
+				instanceCache:      driftCaches.instances,
+				vnicAttachCache:    driftCaches.vnicAttachments,
+				bootVolAttachCache: driftCaches.bootVolumeAttachments,
+				pollInterval:       time.Millisecond,
+			}
+
+			err := p.DeleteInstance(ctx, instanceID)
+			if testCase.terminateNotFound {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Zero(t, fc.ListVnicCount.Get())
+			assert.Zero(t, fc.ListBootCount.Get())
+			assertDriftCacheEntriesEvicted(t, ctx, driftCaches, entries)
+		})
+	}
+}
+
+func TestProvider_ListInstancesAggregatesAndEvictsUnseen(t *testing.T) {
+	ctx := context.Background()
+	const (
+		clusterCompartment = "compartment-cluster"
+		otherCompartment   = "compartment-other"
+		seenInstanceAID    = "instance-seen-a"
+		seenInstanceBID    = "instance-seen-b"
+		unseenInstanceID   = "instance-unseen"
+		orphanInstanceID   = "instance-orphan"
+	)
+	driftCaches := NewDriftCaches()
+	seenA := seedDriftCacheEntries(driftCaches, seenInstanceAID)
+	seenB := driftCacheEntriesForInstance(seenInstanceBID)
+	unseen := seedDriftCacheEntries(driftCaches, unseenInstanceID)
+	orphan := driftCacheEntriesForInstance(orphanInstanceID)
+	seedDriftChildCacheEntries(driftCaches, orphanInstanceID, orphan)
+	fc := &fakes.FakeCompute{
+		OnListInstances: func(_ context.Context,
+			request ocicore.ListInstancesRequest) (ocicore.ListInstancesResponse, error) {
+			switch lo.FromPtr(request.CompartmentId) {
+			case clusterCompartment:
+				return ocicore.ListInstancesResponse{Items: []ocicore.Instance{*seenA.instance.Instance}}, nil
+			case otherCompartment:
+				return ocicore.ListInstancesResponse{Items: []ocicore.Instance{*seenB.instance.Instance}}, nil
+			default:
+				return ocicore.ListInstancesResponse{}, fmt.Errorf("unexpected compartment")
+			}
+		},
+	}
+	p := &DefaultProvider{
+		computeClient:        fc,
+		clusterCompartmentId: clusterCompartment,
+		instanceCache:        driftCaches.instances,
+		vnicAttachCache:      driftCaches.vnicAttachments,
+		bootVolAttachCache:   driftCaches.bootVolumeAttachments,
+	}
+
+	instances, err := p.ListInstances(ctx, []string{
+		"", clusterCompartment, "", otherCompartment, otherCompartment,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, fc.ListInstancesCount.Get())
+	assert.ElementsMatch(t, []string{seenInstanceAID, seenInstanceBID},
+		lo.Map(instances, func(item *ocicore.Instance, _ int) string { return lo.FromPtr(item.Id) }))
+	assertDriftCacheEntriesRetained(t, ctx, driftCaches, seenA)
+	assertCacheEntryRetained(t, ctx, driftCaches.instances, seenInstanceBID, seenB.instance)
+	assertDriftCacheEntriesEvicted(t, ctx, driftCaches, unseen)
+	assertDriftCacheEntriesEvicted(t, ctx, driftCaches, orphan)
+}
+
+func TestProvider_ListInstancesFailureDoesNotPrune(t *testing.T) {
+	ctx := context.Background()
+	driftCaches := NewDriftCaches()
+	retained := seedDriftCacheEntries(driftCaches, "instance-retained")
+	listed := driftCacheEntriesForInstance("instance-listed")
+	fc := &fakes.FakeCompute{
+		OnListInstances: func(_ context.Context,
+			request ocicore.ListInstancesRequest) (ocicore.ListInstancesResponse, error) {
+			if lo.FromPtr(request.CompartmentId) == "compartment-b" {
+				return ocicore.ListInstancesResponse{}, errors.New("list failed")
+			}
+			return ocicore.ListInstancesResponse{Items: []ocicore.Instance{*listed.instance.Instance}}, nil
+		},
+	}
+	p := &DefaultProvider{
+		computeClient:      fc,
+		instanceCache:      driftCaches.instances,
+		vnicAttachCache:    driftCaches.vnicAttachments,
+		bootVolAttachCache: driftCaches.bootVolumeAttachments,
+	}
+
+	_, err := p.ListInstances(ctx, []string{"compartment-a", "compartment-b"})
+	require.EqualError(t, err, "list failed")
+	assert.Equal(t, 2, fc.ListInstancesCount.Get())
+	assertDriftCacheEntriesRetained(t, ctx, driftCaches, retained)
+	assertCacheEntryRetained(t, ctx, driftCaches.instances, "instance-listed", listed.instance)
+}
+
+func TestProvider_ListInstancesEmptyScopeEvictsAll(t *testing.T) {
+	ctx := context.Background()
+	driftCaches := NewDriftCaches()
+	cached := seedDriftCacheEntries(driftCaches, "instance-cached")
+	orphan := driftCacheEntriesForInstance("instance-orphan")
+	seedDriftChildCacheEntries(driftCaches, "instance-orphan", orphan)
+	fc := &fakes.FakeCompute{}
+	p := &DefaultProvider{
+		computeClient:      fc,
+		instanceCache:      driftCaches.instances,
+		vnicAttachCache:    driftCaches.vnicAttachments,
+		bootVolAttachCache: driftCaches.bootVolumeAttachments,
+	}
+
+	instances, err := p.ListInstances(ctx, nil)
+	require.NoError(t, err)
+	assert.Empty(t, instances)
+	assert.Zero(t, fc.ListInstancesCount.Get())
+	assertDriftCacheEntriesEvicted(t, ctx, driftCaches, cached)
+	assertDriftCacheEntriesEvicted(t, ctx, driftCaches, orphan)
+}
+
+type driftCacheEntries struct {
+	instance              *InstanceInfo
+	vnicAttachments       []*ocicore.VnicAttachment
+	bootVolumeAttachments []*ocicore.BootVolumeAttachment
+	vnic                  *ocicore.Vnic
+	bootVolume            *ocicore.BootVolume
+}
+
+func driftCacheEntriesForInstance(instanceID string) driftCacheEntries {
+	vnicID := instanceID + "-vnic"
+	bootVolumeID := instanceID + "-boot"
+	return driftCacheEntries{
+		instance: &InstanceInfo{Instance: &ocicore.Instance{
+			Id:             lo.ToPtr(instanceID),
+			LifecycleState: ocicore.InstanceLifecycleStateRunning,
+			FreeformTags:   map[string]string{NodePoolOciFreeFormTagKey: "nodepool"},
+		}},
+		vnicAttachments: []*ocicore.VnicAttachment{{VnicId: lo.ToPtr(vnicID)}},
+		bootVolumeAttachments: []*ocicore.BootVolumeAttachment{{
+			BootVolumeId: lo.ToPtr(bootVolumeID),
+		}},
+		vnic:       &ocicore.Vnic{Id: lo.ToPtr(vnicID)},
+		bootVolume: &ocicore.BootVolume{Id: lo.ToPtr(bootVolumeID)},
+	}
+}
+
+func seedDriftCacheEntries(caches *DriftCaches, instanceID string) driftCacheEntries {
+	entries := driftCacheEntriesForInstance(instanceID)
+	caches.instances.Set(instanceID, entries.instance)
+	seedDriftChildCacheEntries(caches, instanceID, entries)
+	return entries
+}
+
+func seedDriftChildCacheEntries(caches *DriftCaches, instanceID string, entries driftCacheEntries) {
+	caches.vnicAttachments.Set(instanceID, entries.vnicAttachments)
+	caches.bootVolumeAttachments.Set(instanceID, entries.bootVolumeAttachments)
+	caches.vnics.Set(lo.FromPtr(entries.vnic.Id), entries.vnic)
+	caches.bootVolumes.Set(lo.FromPtr(entries.bootVolume.Id), entries.bootVolume)
+}
+
+func assertDriftCacheEntriesRetained(t *testing.T, ctx context.Context, caches *DriftCaches,
+	entries driftCacheEntries) {
+	t.Helper()
+	instanceID := lo.FromPtr(entries.instance.Id)
+	assertCacheEntryRetained(t, ctx, caches.instances, instanceID, entries.instance)
+	assertCacheEntryRetained(t, ctx, caches.vnicAttachments, instanceID, entries.vnicAttachments)
+	assertCacheEntryRetained(t, ctx, caches.bootVolumeAttachments, instanceID, entries.bootVolumeAttachments)
+	assertCacheEntryRetained(t, ctx, caches.vnics, lo.FromPtr(entries.vnic.Id), entries.vnic)
+	assertCacheEntryRetained(t, ctx, caches.bootVolumes, lo.FromPtr(entries.bootVolume.Id), entries.bootVolume)
+}
+
+func assertDriftCacheEntriesEvicted(t *testing.T, ctx context.Context, caches *DriftCaches,
+	entries driftCacheEntries) {
+	t.Helper()
+	instanceID := lo.FromPtr(entries.instance.Id)
+	assertCacheEntryReloads(t, ctx, caches.instances, instanceID, entries.instance)
+	assertCacheEntryReloads(t, ctx, caches.vnicAttachments, instanceID, entries.vnicAttachments)
+	assertCacheEntryReloads(t, ctx, caches.bootVolumeAttachments, instanceID, entries.bootVolumeAttachments)
+	assertCacheEntryReloads(t, ctx, caches.vnics, lo.FromPtr(entries.vnic.Id), entries.vnic)
+	assertCacheEntryReloads(t, ctx, caches.bootVolumes, lo.FromPtr(entries.bootVolume.Id), entries.bootVolume)
+}
+
+func assertCacheEntryReloads[T any](t *testing.T, ctx context.Context, c *cache.GetOrLoadCache[T],
+	key string, value T) {
+	t.Helper()
+	loads := 0
+	_, err := c.GetOrLoad(ctx, key, func(context.Context, string) (T, error) {
+		loads++
+		return value, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, loads)
+}
+
+func assertCacheEntryRetained[T any](t *testing.T, ctx context.Context, c *cache.GetOrLoadCache[T],
+	key string, value T) {
+	t.Helper()
+	loads := 0
+	loaded, err := c.GetOrLoad(ctx, key, func(context.Context, string) (T, error) {
+		loads++
+		return value, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, value, loaded)
+	assert.Zero(t, loads)
+}
+
+func TestProvider_ListInstancesFiltersAndWritesThrough(t *testing.T) {
+	fc := &fakes.FakeCompute{}
+	fc.OnListInstances = func(context.Context,
+		ocicore.ListInstancesRequest) (ocicore.ListInstancesResponse, error) {
 		return ocicore.ListInstancesResponse{
 			Items: []ocicore.Instance{
 				{Id: lo.ToPtr("ocid1.instance.oc1..term"), DisplayName: lo.ToPtr("term"),
 					AvailabilityDomain: lo.ToPtr("tenancy:PHX-AD-1"),
-					LifecycleState:     ocicore.InstanceLifecycleStateTerminated},
+					LifecycleState:     ocicore.InstanceLifecycleStateTerminated,
+					FreeformTags: map[string]string{
+						NodePoolOciFreeFormTagKey: "poolA", NodeClassHashOciFreeFormTagKey: "h"}},
 				{Id: lo.ToPtr("ocid1.instance.oc1..ok"), DisplayName: lo.ToPtr("ok"),
 					AvailabilityDomain: lo.ToPtr("tenancy:PHX-AD-1"),
 					LifecycleState:     ocicore.InstanceLifecycleStateRunning,
@@ -738,44 +1059,17 @@ func TestProvider_Get_List_Delete_WithFakeCompute(t *testing.T) {
 		computeClient:        fc,
 		clusterCompartmentId: "ocid1.compartment.oc1..parent",
 		instanceCache:        cache.NewDefaultGetOrLoadCache[*InstanceInfo](),
-		vnicAttachCache:      cache.NewDefaultGetOrLoadCache[[]*ocicore.VnicAttachment](),
-		bootVolAttachCache:   cache.NewDefaultGetOrLoadCache[[]*ocicore.BootVolumeAttachment](),
 	}
 
 	ctx := context.TODO()
-	// GetInstance
-	info, err := p.GetInstance(ctx, "ocid1.instance.oc1..xyz")
+	insts, err := p.ListInstances(ctx, []string{""})
 	assert.NoError(t, err)
-	assert.Equal(t, "ocid1.instance.oc1..xyz", *info.Id)
-	assert.Equal(t, "etag-1", info.etag)
-	assert.Equal(t, "inst1", *info.DisplayName)
-
-	// List VNIC attachments (cached path covered by calling twice)
-	vas1, err := p.ListInstanceVnicAttachments(ctx, "ocid1.compartment.oc1..c", "ocid1.instance.oc1..xyz")
+	assert.Len(t, insts, 1)
+	getCountAfterList := fc.GetCount.Get()
+	listedInfo, err := p.GetInstanceCached(ctx, "ocid1.instance.oc1..ok")
 	assert.NoError(t, err)
-	assert.Len(t, vas1, 1)
-
-	// Cached wrapper uses cache; to exercise wrapper without reflection, call twice and ensure same result length
-	// ensure calling direct and then cached path is separate
-	p.vnicAttachCache = cache.NewDefaultGetOrLoadCache[[]*ocicore.VnicAttachment]()
-	vas2, err := p.ListInstanceVnicAttachments(ctx, "ocid1.compartment.oc1..c", "ocid1.instance.oc1..xyz")
-	assert.NoError(t, err)
-	assert.Equal(t, len(vas1), len(vas2))
-
-	// List Boot Volume Attachments
-	bvas, err := p.ListInstanceBootVolumeAttachments(ctx, "ocid1.compartment.oc1..c",
-		"ocid1.instance.oc1..xyz", "tenancy:PHX-AD-1")
-	assert.NoError(t, err)
-	assert.Len(t, bvas, 1)
-
-	// ListInstances filters terminated and missing tag
-	insts, err := p.ListInstances(ctx, "") // "" -> default compartment
-	assert.NoError(t, err)
-	assert.Len(t, insts, 1) // only "ok" instance remains
-
-	// DeleteInstance (Terminate)
-	err = p.DeleteInstance(ctx, "ocid1.instance.oc1..xyz")
-	assert.NoError(t, err)
+	assert.Equal(t, "ocid1.instance.oc1..ok", *listedInfo.Id)
+	assert.Equal(t, getCountAfterList, fc.GetCount.Get(), "ListInstances should write through")
 }
 
 func TestProvider_LaunchInstance_RequestConstruction(t *testing.T) {
@@ -1067,35 +1361,6 @@ func TestProvider_ListAttachments_Pagination(t *testing.T) {
 		"ocid1.instance.oc1..id", "tenancy:PHX-AD-1")
 	require.NoError(t, err)
 	require.Len(t, bvas, 2)
-}
-
-func TestProvider_ErrorPaths_Get_ListInstances(t *testing.T) {
-	// GetInstance error
-	fc := &fakes.FakeCompute{
-		GetErr: errors.New("get instance error"),
-	}
-	p := &DefaultProvider{
-		computeClient:        fc,
-		clusterCompartmentId: "ocid1.compartment.oc1..parent",
-		instanceCache:        cache.NewDefaultGetOrLoadCache[*InstanceInfo](),
-		vnicAttachCache:      cache.NewDefaultGetOrLoadCache[[]*ocicore.VnicAttachment](),
-		bootVolAttachCache:   cache.NewDefaultGetOrLoadCache[[]*ocicore.BootVolumeAttachment](),
-		launchTimeoutVM:      10 * time.Minute,
-		launchTimeoutBM:      20 * time.Minute,
-	}
-	_, err := p.GetInstance(context.TODO(), "ocid1.instance.oc1..x")
-	require.Error(t, err)
-
-	// ListInstances error
-	fc2 := &fakes.FakeCompute{
-		ListInstancesErr: errors.New("list instances error"),
-	}
-	p2 := &DefaultProvider{
-		computeClient:        fc2,
-		clusterCompartmentId: "ocid1.compartment.oc1..parent",
-	}
-	_, err = p2.ListInstances(context.TODO(), "")
-	require.Error(t, err)
 }
 
 func TestProvider_DecorateNodeClaimByInstance_EdgeCases(t *testing.T) {
@@ -1603,6 +1868,7 @@ func TestProvider_LaunchInstance_WorkRequestSuccess(t *testing.T) {
 		launchTimeoutVM:      10 * time.Minute,
 		launchTimeoutBM:      20 * time.Minute,
 		pollInterval:         time.Second,
+		instanceCache:        cache.NewNonExpiringGetOrLoadCache[*InstanceInfo](),
 	}
 
 	it := &instancetype.OciInstanceType{
@@ -1621,6 +1887,10 @@ func TestProvider_LaunchInstance_WorkRequestSuccess(t *testing.T) {
 	assert.NotNil(t, inst)
 	assert.Equal(t, "ocid1.instance.oc1..new", *inst.Id)
 	assert.Greater(t, callCount, 0, "expected GetWorkRequest called at least once")
+	cached, err := p.GetInstanceCached(context.TODO(), "ocid1.instance.oc1..new")
+	require.NoError(t, err)
+	assert.Same(t, inst, cached)
+	assert.Equal(t, 0, fc.GetCount.Get(), "successful launch should seed the instance cache")
 }
 
 func TestProvider_LaunchInstance_WorkRequestOutOfHostCapacity(t *testing.T) {
@@ -1823,6 +2093,9 @@ func TestProvider_LaunchInstance_Timeout(t *testing.T) {
 		require.NoError(t, launchErr)
 		assert.NotNil(t, inst)
 		assert.Equal(t, instanceId1, *inst.Id)
+		cached, cacheErr := p.GetInstanceCached(context.TODO(), instanceId1)
+		require.NoError(t, cacheErr)
+		assert.Same(t, inst, cached)
 	})
 
 	t.Run("launch a vm shape timeout, then retrieve volumes success with attached volume,"+

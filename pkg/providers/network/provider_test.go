@@ -9,9 +9,11 @@ package network
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
+	"github.com/oracle/karpenter-provider-oci/pkg/cache"
 	"github.com/oracle/karpenter-provider-oci/pkg/fakes"
 	ocicore "github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/samber/lo"
@@ -26,7 +28,7 @@ func setupTest(t *testing.T) func(t *testing.T) {
 	vcnClient := fakes.FakeVirtualNetwork{}
 	var err error
 	provider, err = NewProvider(context.TODO(), "testVcnCompartmentId", true,
-		[]IpFamily{IPv4}, &vcnClient)
+		[]IpFamily{IPv4}, &vcnClient, newTestVnicCache())
 	if err != nil {
 		t.Fatalf("could not create DefaultProvider")
 	}
@@ -44,6 +46,52 @@ func TestResolveSimpleVnicConfigWithNoError(t *testing.T) {
 
 	_, err := provider.resolveSimpleVnicConfig(context.TODO(), testConfig, "testIdentifier")
 	assert.NoError(t, err)
+}
+
+func TestVnicFreshReadWritesThroughAndFailurePreservesCache(t *testing.T) {
+	ctx := context.Background()
+	current := &ocicore.Vnic{Id: lo.ToPtr("vnic-1"), DisplayName: lo.ToPtr("old")}
+	var freshErr error
+	vcnClient := &fakes.FakeVirtualNetwork{
+		OnGetVnic: func(context.Context, ocicore.GetVnicRequest) (ocicore.GetVnicResponse, error) {
+			if freshErr != nil {
+				return ocicore.GetVnicResponse{}, freshErr
+			}
+			return ocicore.GetVnicResponse{Vnic: *current}, nil
+		},
+	}
+	p, err := NewProvider(ctx, "compartment-1", false, []IpFamily{IPv4}, vcnClient, newTestVnicCache())
+	assert.NoError(t, err)
+
+	cached, err := p.GetVnicCached(ctx, "vnic-1")
+	assert.NoError(t, err)
+	assert.Equal(t, "old", *cached.DisplayName)
+	assert.Equal(t, 1, vcnClient.GetVnicCount)
+
+	current = &ocicore.Vnic{Id: lo.ToPtr("vnic-1"), DisplayName: lo.ToPtr("new")}
+	cachedAgain, err := p.GetVnicCached(ctx, "vnic-1")
+	assert.NoError(t, err)
+	assert.Same(t, cached, cachedAgain)
+	assert.Equal(t, "old", *cachedAgain.DisplayName)
+	assert.Equal(t, 1, vcnClient.GetVnicCount)
+
+	refreshed, err := p.GetVnic(ctx, "vnic-1")
+	assert.NoError(t, err)
+	assert.Equal(t, "new", *refreshed.DisplayName)
+	assert.Equal(t, 2, vcnClient.GetVnicCount)
+	cached, err = p.GetVnicCached(ctx, "vnic-1")
+	assert.NoError(t, err)
+	assert.Same(t, refreshed, cached)
+	assert.Equal(t, 2, vcnClient.GetVnicCount)
+
+	freshErr = errors.New("temporary VNIC read failure")
+	_, err = p.GetVnic(ctx, "vnic-1")
+	assert.Error(t, err)
+	assert.Equal(t, 3, vcnClient.GetVnicCount)
+	cached, err = p.GetVnicCached(ctx, "vnic-1")
+	assert.NoError(t, err)
+	assert.Same(t, refreshed, cached)
+	assert.Equal(t, 3, vcnClient.GetVnicCount)
 }
 
 func TestResolveSimpleVnicConfigWithDifferentSubnet(t *testing.T) {
@@ -162,7 +210,7 @@ func TestResolveNetworkConfig_NPNCluster_NoSecondaryVnics(t *testing.T) {
 	// Create NPN cluster provider
 	vcnClient := fakes.FakeVirtualNetwork{}
 	npnProvider, err := NewProvider(context.TODO(), "testVcnCompartmentId", true,
-		[]IpFamily{IPv4}, &vcnClient)
+		[]IpFamily{IPv4}, &vcnClient, newTestVnicCache())
 	assert.NoError(t, err)
 
 	networkCfg := &v1beta1.NetworkConfig{
@@ -185,7 +233,7 @@ func TestResolveNetworkConfig_NonNPNCluster_WithSecondaryVnics(t *testing.T) {
 	// Create non-NPN cluster provider
 	vcnClient := fakes.FakeVirtualNetwork{}
 	nonNpnProvider, err := NewProvider(context.TODO(), "testVcnCompartmentId", false,
-		[]IpFamily{IPv4}, &vcnClient)
+		[]IpFamily{IPv4}, &vcnClient, newTestVnicCache())
 	assert.NoError(t, err)
 
 	networkCfg := &v1beta1.NetworkConfig{
@@ -252,24 +300,6 @@ func TestResolveNsgs_InvalidConfig(t *testing.T) {
 	_, err := provider.resolveNsgs(context.TODO(), configs)
 	assert.Error(t, err)
 	assert.Equal(t, InvalidNsgConfigError, err)
-}
-
-func TestGetVnic(t *testing.T) {
-	teardownTest := setupTest(t)
-	defer teardownTest(t)
-
-	_, err := provider.GetVnic(context.TODO(), "testVnicId")
-	// Fake client returns empty response, should not error
-	assert.NoError(t, err)
-}
-
-func TestGetVnicCached(t *testing.T) {
-	teardownTest := setupTest(t)
-	defer teardownTest(t)
-
-	_, err := provider.GetVnicCached(context.TODO(), "testVnicId")
-	// Fake client returns empty response, should not error
-	assert.NoError(t, err)
 }
 
 func TestFilterSubnets_ByDisplayName_Cache(t *testing.T) {
@@ -409,24 +439,19 @@ func TestIsFromDifferentVcn_SameId(t *testing.T) {
 	assert.False(t, provider.isFromDifferentVcn(nsg, subnet))
 }
 
-func TestGetVnicCached_CacheHit(t *testing.T) {
-	provider, fake := newProviderForNetworkTests([]IpFamily{IPv4}, false)
-
-	// First call
-	_, err := provider.GetVnicCached(context.TODO(), "vnic-1")
-	assert.NoError(t, err)
-	assert.Equal(t, 1, fake.GetVnicCount)
-
-	// Second call - should be from cache
-	_, err = provider.GetVnicCached(context.TODO(), "vnic-1")
-	assert.NoError(t, err)
-	assert.Equal(t, 1, fake.GetVnicCount) // unchanged = cache hit
-}
-
 func newProviderForNetworkTests(ipFamilies []IpFamily, npnCluster bool) (*DefaultProvider, *fakes.FakeVirtualNetwork) {
 	vcn := fakes.NewFakeVcnForNetworkTests()
-	p, _ := NewProvider(context.TODO(), "vcn-1", npnCluster, ipFamilies, vcn)
+	p, _ := NewProvider(context.TODO(), "vcn-1", npnCluster, ipFamilies, vcn, newTestVnicCache())
 	return p, vcn
+}
+
+func newTestVnicCache() *cache.GetOrLoadCache[*ocicore.Vnic] {
+	return cache.NewNonExpiringGetOrLoadCache[*ocicore.Vnic]()
+}
+
+func TestNewProviderRequiresVnicCache(t *testing.T) {
+	_, err := NewProvider(context.Background(), "", false, nil, nil, nil)
+	assert.ErrorIs(t, err, errVnicCacheRequired)
 }
 
 func TestFilterNsg_ByDisplayName_Cache(t *testing.T) {

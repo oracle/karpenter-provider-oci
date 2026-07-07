@@ -130,7 +130,7 @@ type FakeInstanceProvider struct {
 	GetInstanceFn                       func(context.Context, string) (*instance.InstanceInfo, error)
 	GetInstanceCachedFn                 func(context.Context, string) (*instance.InstanceInfo, error)
 	GetInstanceCompartmentFn            func(*ocioraclecouldcomv1beta1.OCINodeClass) string
-	ListInstancesFn                     func(context.Context, string) ([]*ocicore.Instance, error)
+	ListInstancesFn                     func(context.Context, []string) ([]*ocicore.Instance, error)
 	ListInstanceBootVolumeAttachmentsFn func(context.Context, string, string, string) ([]*ocicore.BootVolumeAttachment,
 		error)
 	ListInstanceBootVolumeAttachmentsCFn func(context.Context, string, string, string) ([]*ocicore.BootVolumeAttachment,
@@ -191,9 +191,9 @@ func (ip *FakeInstanceProvider) GetInstanceCompartment(nodeClass *ocioraclecould
 }
 
 func (ip *FakeInstanceProvider) ListInstances(ctx context.Context,
-	compartmentId string) ([]*ocicore.Instance, error) {
+	compartmentIDs []string) ([]*ocicore.Instance, error) {
 	if ip.ListInstancesFn != nil {
-		return ip.ListInstancesFn(ctx, compartmentId)
+		return ip.ListInstancesFn(ctx, compartmentIDs)
 	}
 	return []*ocicore.Instance{}, nil
 }

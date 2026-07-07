@@ -500,7 +500,6 @@ func (c *CloudProvider) List(ctx context.Context) ([]*corev1.NodeClaim, error) {
 	}))
 
 	var nodeClaims []*corev1.NodeClaim
-	var ins []*ocicore.Instance
 
 	nodePoolNameSet := sets.New(lo.Map(nodePoolList.Items, func(item corev1.NodePool, _ int) string {
 		return item.Name
@@ -510,28 +509,26 @@ func (c *CloudProvider) List(ctx context.Context) ([]*corev1.NodeClaim, error) {
 		return item.Name, string(item.UID)
 	})
 
-	for _, compartmentId := range nodeCompartments {
-		ins, err = c.instanceProvider.ListInstances(ctx, compartmentId)
-		if err != nil {
-			return nil, err
+	ins, err := c.instanceProvider.ListInstances(ctx, nodeCompartments)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, i := range ins {
+		nodePoolName, ok := instance.GetNodePoolNameFromInstance(i)
+		if !ok || !isInstanceOwnedByNodePool(i, nodePoolUIDByName[nodePoolName]) {
+			continue
 		}
 
-		for _, i := range ins {
-			nodePoolName, ok := instance.GetNodePoolNameFromInstance(i)
-			if !ok || !isInstanceOwnedByNodePool(i, nodePoolUIDByName[nodePoolName]) {
-				continue
-			}
+		nodeClaim, inerr := c.createNodeClaimFromInstance(ctx, i)
+		if inerr != nil {
+			return nil, inerr
+		}
 
-			nodeClaim, inerr := c.createNodeClaimFromInstance(ctx, i)
-			if inerr != nil {
-				return nil, inerr
-			}
-
-			// filter out instances that are unknown.
-			if nodePoolNameSet.Has(nodeClaim.Labels[corev1.NodePoolLabelKey]) {
-				c.placementProvider.InstanceFound(nodeClaim.Labels[corev1.NodePoolLabelKey], i)
-				nodeClaims = append(nodeClaims, nodeClaim)
-			}
+		// filter out instances that are unknown.
+		if nodePoolNameSet.Has(nodeClaim.Labels[corev1.NodePoolLabelKey]) {
+			c.placementProvider.InstanceFound(nodeClaim.Labels[corev1.NodePoolLabelKey], i)
+			nodeClaims = append(nodeClaims, nodeClaim)
 		}
 	}
 
@@ -718,7 +715,6 @@ func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *corev1.NodeCla
 
 	// ---- 1. INSTANCE DRIFT (CACHED, then REAL) ----
 	instanceCached, err := c.instanceProvider.GetInstanceCached(ctx, nodeClaim.Status.ProviderID)
-	// TODO: handle not found
 	if err != nil {
 		return "", fmt.Errorf("drifted status unknown: %v", err)
 	}
@@ -748,11 +744,7 @@ func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *corev1.NodeCla
 	if err != nil {
 		return "", err
 	}
-
-	var skipSecondaryVnicsCheck bool
-	if !nodeClaim.StatusConditions().Get(corev1.ConditionTypeInitialized).IsTrue() {
-		skipSecondaryVnicsCheck = true
-	}
+	skipSecondaryVnicsCheck := !nodeClaim.StatusConditions().Get(corev1.ConditionTypeInitialized).IsTrue()
 
 	reason, err = IsInstanceNetworkDrifted(ctx, desiredInstanceState, vnicCached,
 		func(ctx context.Context, vnicOcid string) (*ocicore.Vnic, error) {

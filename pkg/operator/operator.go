@@ -141,8 +141,10 @@ func createOperator(ctx context.Context, coreOp *operator.Operator,
 		unavailableOfferings,
 		coreOp.Elected()))
 
+	driftCaches := instance.NewDriftCaches()
 	networkProvider := lo.Must(network.NewProvider(ctx, ociOptions.VcnCompartmentId,
-		ociOptions.OciVcnIpNative, ociOptions.IpFamiliesFlag.IpFamilies, ociClient))
+		ociOptions.OciVcnIpNative, ociOptions.IpFamiliesFlag.IpFamilies, ociClient,
+		driftCaches.VnicCache()))
 
 	instanceMetadataProvider := lo.Must(instancemeta.NewProvider(ctx, ociOptions.ApiserverEndpoint,
 		restConfig.TLSClientConfig.CAData, ociOptions.IpFamiliesFlag.IpFamilies))
@@ -154,7 +156,7 @@ func createOperator(ctx context.Context, coreOp *operator.Operator,
 	bmTimeout := time.Duration(ociOptions.InstanceLaunchTimeoutBMMins) * time.Minute
 	instancePollInterval := time.Duration(ociOptions.InstanceOperationPollIntervalInSeconds) * time.Second
 	instanceProvider := lo.Must(instance.NewProvider(ctx, ociClient, ociClient,
-		ociOptions.ClusterCompartmentId, instanceMetadataProvider, networkProvider,
+		ociOptions.ClusterCompartmentId, instanceMetadataProvider, driftCaches,
 		vmTimeout, bmTimeout, ociOptions.InstanceLaunchTimeOutFailOver, instancePollInterval,
 		unavailableOfferings, ociOptions.EnableUnavailableOfferingsOnServiceLimitExceeded))
 
@@ -163,7 +165,7 @@ func createOperator(ctx context.Context, coreOp *operator.Operator,
 
 	kmsKeyProvider := lo.Must(kms.NewProvider(ctx, ociOptions.ClusterCompartmentId, configProvider, &rateLimiter))
 
-	blockStorageProvider := lo.Must(blockstorage.NewProvider(ctx, ociClient))
+	blockStorageProvider := lo.Must(blockstorage.NewProvider(ctx, ociClient, driftCaches.BootVolumeCache()))
 
 	npnProvider := lo.Must(npn.NewProvider(ctx, ociOptions.OciVcnIpNative, ociOptions.IpFamiliesFlag.IpFamilies))
 	op := &Operator{

@@ -9,11 +9,14 @@ package blockstorage
 
 import (
 	"context"
+	"errors"
 
 	"github.com/oracle/karpenter-provider-oci/pkg/cache"
 	"github.com/oracle/karpenter-provider-oci/pkg/oci"
 	ocicore "github.com/oracle/oci-go-sdk/v65/core"
 )
+
+var errBootVolumeCacheRequired = errors.New("boot volume cache is required")
 
 type Provider interface {
 	GetBootVolume(ctx context.Context, bootVolumeOcid string) (*ocicore.BootVolume, error)
@@ -25,21 +28,28 @@ type DefaultProvider struct {
 	bootVolumeCache    *cache.GetOrLoadCache[*ocicore.BootVolume]
 }
 
-func NewProvider(ctx context.Context, blockStorageClient oci.BlockStorageClient) (*DefaultProvider, error) {
+func NewProvider(ctx context.Context, blockStorageClient oci.BlockStorageClient,
+	bootVolumeCache *cache.GetOrLoadCache[*ocicore.BootVolume]) (*DefaultProvider, error) {
+	if bootVolumeCache == nil {
+		return nil, errBootVolumeCacheRequired
+	}
 	p := &DefaultProvider{
 		blockStorageClient: blockStorageClient,
-		bootVolumeCache:    cache.NewDefaultGetOrLoadCache[*ocicore.BootVolume](),
+		bootVolumeCache:    bootVolumeCache,
 	}
 
 	return p, nil
 }
 
-func (p DefaultProvider) GetBootVolume(ctx context.Context, bootVolumeOcid string) (*ocicore.BootVolume, error) {
-	p.bootVolumeCache.Evict(ctx, bootVolumeOcid)
-	return p.GetBootVolumeCached(ctx, bootVolumeOcid)
+func (p *DefaultProvider) GetBootVolume(ctx context.Context,
+	bootVolumeOcid string) (*ocicore.BootVolume, error) {
+	return p.bootVolumeCache.Refresh(ctx, bootVolumeOcid,
+		func(ctx context.Context, _ string) (*ocicore.BootVolume, error) {
+			return p.getBootVolumeImpl(ctx, bootVolumeOcid)
+		})
 }
 
-func (p DefaultProvider) getBootVolumeImpl(ctx context.Context, bootVolumeOcid string) (*ocicore.BootVolume, error) {
+func (p *DefaultProvider) getBootVolumeImpl(ctx context.Context, bootVolumeOcid string) (*ocicore.BootVolume, error) {
 	getResp, err := p.blockStorageClient.GetBootVolume(ctx, ocicore.GetBootVolumeRequest{
 		BootVolumeId: &bootVolumeOcid,
 	})
@@ -49,10 +59,11 @@ func (p DefaultProvider) getBootVolumeImpl(ctx context.Context, bootVolumeOcid s
 	return &getResp.BootVolume, nil
 }
 
-func (p *DefaultProvider) GetBootVolumeCached(ctx context.Context, bootVolumeOcid string) (*ocicore.BootVolume, error) {
+func (p *DefaultProvider) GetBootVolumeCached(ctx context.Context,
+	bootVolumeOcid string) (*ocicore.BootVolume, error) {
 	return p.bootVolumeCache.GetOrLoad(ctx, bootVolumeOcid,
-		func(ctx context.Context, key string) (*ocicore.BootVolume, error) {
-			return p.getBootVolumeImpl(ctx, key)
+		func(ctx context.Context, _ string) (*ocicore.BootVolume, error) {
+			return p.getBootVolumeImpl(ctx, bootVolumeOcid)
 
 		})
 }

@@ -9,7 +9,6 @@ package cache
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"time"
 
@@ -51,6 +50,14 @@ func NewDefaultGetOrLoadCache[T any]() *GetOrLoadCache[T] {
 	}
 }
 
+// NewNonExpiringGetOrLoadCache creates a cache whose entries are retained until
+// they are explicitly replaced or evicted.
+func NewNonExpiringGetOrLoadCache[T any]() *GetOrLoadCache[T] {
+	return &GetOrLoadCache[T]{
+		cache: cache.New(cache.NoExpiration, cache.NoExpiration),
+	}
+}
+
 func (c *GetOrLoadCache[T]) GetOrLoad(ctx context.Context, key string,
 	loader LoaderFunc[T]) (T, error) {
 	t, found := c.getFromCache(ctx, key)
@@ -58,25 +65,62 @@ func (c *GetOrLoadCache[T]) GetOrLoad(ctx context.Context, key string,
 		return t, nil
 	}
 
-	// Lock for this key to avoid duplicate loads
+	// Lock for this key to avoid duplicate loads.
 	muIface, _ := c.locks.LoadOrStore(key, &sync.Mutex{})
 	mu := muIface.(*sync.Mutex)
 	mu.Lock()
-	defer mu.Unlock()
 	defer c.locks.Delete(key)
+	defer mu.Unlock()
 
-	// Double-check cache after acquiring lock (with safe assertion)
+	// Double-check after acquiring the lock.
 	t, found = c.getFromCache(ctx, key)
 	if found {
 		return t, nil
 	}
 
-	// Load, store, return
 	return c.load(ctx, key, loader)
 }
 
-func (c *GetOrLoadCache[T]) Evict(ctx context.Context, key string) {
+// Evict removes the current entry. An in-flight load may repopulate it after eviction.
+func (c *GetOrLoadCache[T]) Evict(key string) {
 	c.cache.Delete(key)
+}
+
+// Set exposes the underlying typed cache write operation.
+func (c *GetOrLoadCache[T]) Set(key string, value T) {
+	c.cache.Set(key, value, cache.DefaultExpiration)
+}
+
+// Refresh always invokes the loader and replaces the cached value only after
+// a successful load.
+func (c *GetOrLoadCache[T]) Refresh(ctx context.Context, key string,
+	loader LoaderFunc[T]) (T, error) {
+	return c.load(ctx, key, loader)
+}
+
+// OnEvicted registers a typed callback that runs when an existing entry is
+// explicitly evicted or expires. Overwriting an entry does not invoke it.
+func (c *GetOrLoadCache[T]) OnEvicted(callback func(key string, value T)) {
+	if callback == nil {
+		c.cache.OnEvicted(nil)
+		return
+	}
+	c.cache.OnEvicted(func(key string, value interface{}) {
+		typed, ok := value.(T)
+		if ok {
+			callback(key, typed)
+		}
+	})
+}
+
+// EvictMatching removes all current entries whose keys match the predicate. An in-flight load may
+// repopulate an entry after eviction.
+func (c *GetOrLoadCache[T]) EvictMatching(match func(key string) bool) {
+	for key := range c.cache.Items() {
+		if match(key) {
+			c.cache.Delete(key)
+		}
+	}
 }
 
 func (c *GetOrLoadCache[T]) getFromCache(ctx context.Context, key string) (T, bool) {
@@ -105,8 +149,4 @@ func (c *GetOrLoadCache[T]) load(ctx context.Context, key string, loader LoaderF
 
 	var zero T
 	return zero, err
-}
-
-func MakeCompositeKey(values ...string) string {
-	return strings.Join(values, "|")
 }

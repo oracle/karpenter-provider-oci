@@ -153,6 +153,7 @@ type FakeVirtualNetwork struct {
 
 	// For network tests, use extended data instead of legacy TestSubnets/TestNsgs
 	UseNetworkTestData bool
+	OnGetVnic          func(context.Context, ocicore.GetVnicRequest) (ocicore.GetVnicResponse, error)
 }
 
 func (v *FakeVirtualNetwork) GetNetworkSecurityGroup(ctx context.Context,
@@ -337,6 +338,9 @@ func (v *FakeVirtualNetwork) ListNetworkSecurityGroups(ctx context.Context,
 func (v *FakeVirtualNetwork) GetVnic(ctx context.Context,
 	request ocicore.GetVnicRequest) (response ocicore.GetVnicResponse, err error) {
 	v.GetVnicCount++
+	if v.OnGetVnic != nil {
+		return v.OnGetVnic(ctx, request)
+	}
 
 	var vnic ocicore.Vnic
 	if v.UseNetworkTestData {

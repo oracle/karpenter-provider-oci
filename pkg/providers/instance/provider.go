@@ -44,6 +44,8 @@ const (
 	NodeClassHashOciFreeFormTagKey = "Karpenter_NodeClass_Hash"
 )
 
+var errDriftCachesRequired = errors.New("drift caches are required")
+
 type Provider interface {
 	LaunchInstance(ctx context.Context,
 		nodeClaim *corev1.NodeClaim,
@@ -62,7 +64,7 @@ type Provider interface {
 
 	GetInstanceCompartment(nodeClass *v1beta1.OCINodeClass) string
 
-	ListInstances(ctx context.Context, compartmentId string) ([]*ocicore.Instance, error)
+	ListInstances(ctx context.Context, compartmentIDs []string) ([]*ocicore.Instance, error)
 
 	ListInstanceBootVolumeAttachments(ctx context.Context,
 		compartmentOcid string, instanceOcid string, ad string) ([]*ocicore.BootVolumeAttachment, error)
@@ -82,7 +84,6 @@ type DefaultProvider struct {
 	workRequestClient                                oci.WorkRequestClient
 	clusterCompartmentId                             string
 	instanceMetaProvider                             instancemeta.Provider
-	networkProvider                                  network.Provider
 	instanceCache                                    *cache.GetOrLoadCache[*InstanceInfo]
 	vnicAttachCache                                  *cache.GetOrLoadCache[[]*ocicore.VnicAttachment]
 	bootVolAttachCache                               *cache.GetOrLoadCache[[]*ocicore.BootVolumeAttachment]
@@ -98,21 +99,23 @@ func NewProvider(ctx context.Context, computeClient oci.ComputeClient,
 	workRequestClient oci.WorkRequestClient,
 	clusterCompartmentId string,
 	instanceMetaProvider instancemeta.Provider,
-	networkProvider network.Provider,
+	driftCaches *DriftCaches,
 	launchTimeoutVM, launchTimeoutBM time.Duration,
 	launchTimeOutFailOver bool,
 	pollInterval time.Duration,
 	unavailableOfferings *cache.UnavailableOfferings,
 	enableUnavailableOfferingsOnServiceLimitExceeded bool) (*DefaultProvider, error) {
+	if driftCaches == nil {
+		return nil, errDriftCachesRequired
+	}
 	p := &DefaultProvider{
 		computeClient:         computeClient,
 		workRequestClient:     workRequestClient,
 		clusterCompartmentId:  clusterCompartmentId,
 		instanceMetaProvider:  instanceMetaProvider,
-		networkProvider:       networkProvider,
-		instanceCache:         cache.NewDefaultGetOrLoadCache[*InstanceInfo](),
-		vnicAttachCache:       cache.NewDefaultGetOrLoadCache[[]*ocicore.VnicAttachment](),
-		bootVolAttachCache:    cache.NewDefaultGetOrLoadCache[[]*ocicore.BootVolumeAttachment](),
+		instanceCache:         driftCaches.instances,
+		vnicAttachCache:       driftCaches.vnicAttachments,
+		bootVolAttachCache:    driftCaches.bootVolumeAttachments,
 		launchTimeoutVM:       launchTimeoutVM,
 		launchTimeoutBM:       launchTimeoutBM,
 		launchTimeOutFailOver: launchTimeOutFailOver,
@@ -288,7 +291,9 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 		case <-ctx.Done():
 			return nil, errors.New("context cancelled")
 		case <-timer.C:
-			return p.instanceInProvisioningOrPlacementTimeOut(ctx, instance)
+			result, resultErr := p.instanceInProvisioningOrPlacementTimeOut(ctx, instance)
+			p.cacheInstance(result)
+			return result, resultErr
 		case <-time.After(p.pollInterval):
 			wrResp, getWrErr := p.workRequestClient.GetWorkRequest(ctx, ociwr.GetWorkRequestRequest{
 				WorkRequestId: &wrID,
@@ -300,6 +305,7 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 			switch wrResp.WorkRequest.Status {
 			case ociwr.WorkRequestStatusSucceeded:
 				oci.LogWorkRequestDuration(ctx, "LaunchInstance", wrResp.WorkRequest)
+				p.cacheInstance(instance)
 				return instance, nil
 			case ociwr.WorkRequestStatusFailed, ociwr.WorkRequestStatusCanceled, ociwr.WorkRequestStatusCanceling:
 				oci.LogWorkRequestDuration(ctx, "LaunchInstance", wrResp.WorkRequest)
@@ -375,8 +381,12 @@ func (p *DefaultProvider) GetInstanceCompartment(nodeClass *v1beta1.OCINodeClass
 }
 
 func (p *DefaultProvider) GetInstance(ctx context.Context, instanceOcid string) (*InstanceInfo, error) {
-	p.instanceCache.Evict(ctx, instanceOcid)
-	return p.GetInstanceCached(ctx, instanceOcid)
+	instanceInfo, err := p.instanceCache.Refresh(ctx, instanceOcid,
+		func(ctx context.Context, key string) (*InstanceInfo, error) {
+			return p.getInstanceImpl(ctx, key)
+		})
+	p.evictInstanceIfGone(instanceOcid, instanceInfo, err)
+	return instanceInfo, err
 }
 
 func (p *DefaultProvider) getInstanceImpl(ctx context.Context, instanceOcid string) (*InstanceInfo, error) {
@@ -391,17 +401,37 @@ func (p *DefaultProvider) getInstanceImpl(ctx context.Context, instanceOcid stri
 }
 
 func (p *DefaultProvider) GetInstanceCached(ctx context.Context, instanceOcid string) (*InstanceInfo, error) {
-	return p.instanceCache.GetOrLoad(ctx, instanceOcid, func(ctx context.Context, key string) (*InstanceInfo, error) {
-		return p.getInstanceImpl(ctx, key)
-	})
+	instanceInfo, err := p.instanceCache.GetOrLoad(ctx, instanceOcid,
+		func(ctx context.Context, key string) (*InstanceInfo, error) {
+			return p.getInstanceImpl(ctx, key)
+		})
+	p.evictInstanceIfGone(instanceOcid, instanceInfo, err)
+	return instanceInfo, err
+}
+
+func (p *DefaultProvider) evictInstanceIfGone(instanceOcid string, instanceInfo *InstanceInfo, err error) {
+	if oci.IsNotFound(err) || (err == nil && IsInstanceTerminated(instanceInfo)) {
+		p.evictInstanceCaches(instanceOcid)
+	}
+}
+
+func (p *DefaultProvider) cacheInstance(instanceInfo *InstanceInfo) {
+	if p.instanceCache == nil || instanceInfo == nil || instanceInfo.Instance == nil ||
+		instanceInfo.Id == nil || IsInstanceTerminated(instanceInfo) {
+		return
+	}
+	p.instanceCache.Set(*instanceInfo.Id, instanceInfo)
 }
 
 func (p *DefaultProvider) ListInstanceVnicAttachments(ctx context.Context,
 	compartmentOcid string, instanceOcid string) ([]*ocicore.VnicAttachment, error) {
-	cacheKey := cache.MakeCompositeKey(compartmentOcid, instanceOcid)
-	p.vnicAttachCache.Evict(ctx, cacheKey)
-
-	return p.ListInstanceVnicAttachmentsCached(ctx, compartmentOcid, instanceOcid)
+	attachments, err := p.listInstanceVnicAttachmentsImpl(ctx, compartmentOcid, instanceOcid)
+	if err != nil {
+		return nil, err
+	}
+	p.vnicAttachCache.Evict(instanceOcid)
+	p.vnicAttachCache.Set(instanceOcid, attachments)
+	return attachments, nil
 }
 
 func (p *DefaultProvider) listInstanceVnicAttachmentsImpl(ctx context.Context,
@@ -431,9 +461,7 @@ func (p *DefaultProvider) listInstanceVnicAttachmentsImpl(ctx context.Context,
 
 func (p *DefaultProvider) ListInstanceVnicAttachmentsCached(ctx context.Context,
 	compartmentOcid, instanceOcid string) ([]*ocicore.VnicAttachment, error) {
-	// Use a composite key since both compartmentOcid and instanceOcid distinguish the call
-	cacheKey := cache.MakeCompositeKey(compartmentOcid, instanceOcid)
-	return p.vnicAttachCache.GetOrLoad(ctx, cacheKey,
+	return p.vnicAttachCache.GetOrLoad(ctx, instanceOcid,
 		func(ctx context.Context, key string) ([]*ocicore.VnicAttachment, error) {
 			return p.listInstanceVnicAttachmentsImpl(ctx, compartmentOcid, instanceOcid)
 		})
@@ -441,9 +469,13 @@ func (p *DefaultProvider) ListInstanceVnicAttachmentsCached(ctx context.Context,
 
 func (p *DefaultProvider) ListInstanceBootVolumeAttachments(ctx context.Context,
 	compartmentOcid string, instanceOcid string, ad string) ([]*ocicore.BootVolumeAttachment, error) {
-	cacheKey := cache.MakeCompositeKey(compartmentOcid, instanceOcid, ad)
-	p.bootVolAttachCache.Evict(ctx, cacheKey)
-	return p.ListInstanceBootVolumeAttachmentsCached(ctx, compartmentOcid, instanceOcid, ad)
+	attachments, err := p.listInstanceBootVolumeAttachmentsImpl(ctx, compartmentOcid, instanceOcid, ad)
+	if err != nil {
+		return nil, err
+	}
+	p.bootVolAttachCache.Evict(instanceOcid)
+	p.bootVolAttachCache.Set(instanceOcid, attachments)
+	return attachments, nil
 }
 
 func (p *DefaultProvider) listInstanceBootVolumeAttachmentsImpl(ctx context.Context,
@@ -475,24 +507,48 @@ func (p *DefaultProvider) listInstanceBootVolumeAttachmentsImpl(ctx context.Cont
 
 func (p *DefaultProvider) ListInstanceBootVolumeAttachmentsCached(ctx context.Context,
 	compartmentOcid, instanceOcid, ad string) ([]*ocicore.BootVolumeAttachment, error) {
-	cacheKey := cache.MakeCompositeKey(compartmentOcid, instanceOcid, ad)
-	return p.bootVolAttachCache.GetOrLoad(ctx, cacheKey,
+	return p.bootVolAttachCache.GetOrLoad(ctx, instanceOcid,
 		func(ctx context.Context, key string) ([]*ocicore.BootVolumeAttachment, error) {
 			return p.listInstanceBootVolumeAttachmentsImpl(ctx, compartmentOcid, instanceOcid, ad)
 		})
 }
 
-func (p *DefaultProvider) ListInstances(ctx context.Context, compartmentId string) ([]*ocicore.Instance, error) {
-	if compartmentId == "" {
-		log.FromContext(ctx).V(1).Info("Node compartmentId is missing, falling back to cluster compartmentId")
-		compartmentId = p.clusterCompartmentId
+func (p *DefaultProvider) ListInstances(ctx context.Context, compartmentIDs []string) ([]*ocicore.Instance, error) {
+	var instances []*ocicore.Instance
+	seenInstanceIDs := map[string]struct{}{}
+	listedCompartments := map[string]struct{}{}
+	for _, compartmentID := range compartmentIDs {
+		if compartmentID == "" {
+			log.FromContext(ctx).V(1).Info("Node compartmentId is missing, falling back to cluster compartmentId")
+			compartmentID = p.clusterCompartmentId
+		}
+		if _, listed := listedCompartments[compartmentID]; listed {
+			continue
+		}
+		listedCompartments[compartmentID] = struct{}{}
+
+		listed, err := p.listInstances(ctx, compartmentID)
+		if err != nil {
+			return nil, err
+		}
+		instances = append(instances, listed...)
+		for _, item := range listed {
+			if item.Id != nil {
+				seenInstanceIDs[*item.Id] = struct{}{}
+			}
+		}
 	}
 
+	p.evictUnseenInstanceCaches(seenInstanceIDs)
+	return instances, nil
+}
+
+func (p *DefaultProvider) listInstances(ctx context.Context, compartmentID string) ([]*ocicore.Instance, error) {
 	var page *string
 	var instances []*ocicore.Instance
 	for {
 		resp, err := p.computeClient.ListInstances(ctx, ocicore.ListInstancesRequest{
-			CompartmentId: &compartmentId,
+			CompartmentId: &compartmentID,
 			Limit:         common.Int(100),
 			Page:          page,
 		})
@@ -501,18 +557,17 @@ func (p *DefaultProvider) ListInstances(ctx context.Context, compartmentId strin
 			return nil, err
 		}
 
-		instances = append(instances, lo.ToSlicePtr(lo.Filter(resp.Items, func(item ocicore.Instance, _ int) bool {
+		for i := range resp.Items {
+			item := &resp.Items[i]
+			if _, ok := GetNodePoolNameFromInstance(item); !ok || item.Id == nil {
+				continue
+			}
 			if item.LifecycleState == ocicore.InstanceLifecycleStateTerminated {
-				return false
+				continue
 			}
-
-			// filter out instance that has no node pool name
-			if _, ok := GetNodePoolNameFromInstance(&item); ok {
-				return true
-			}
-
-			return false
-		}))...)
+			instances = append(instances, item)
+			p.cacheInstance(&InstanceInfo{Instance: item})
+		}
 
 		page = resp.OpcNextPage
 		if page == nil {
@@ -523,11 +578,44 @@ func (p *DefaultProvider) ListInstances(ctx context.Context, compartmentId strin
 	return instances, nil
 }
 
+func (p *DefaultProvider) evictInstanceCaches(instanceOcid string) {
+	if p.instanceCache != nil {
+		p.instanceCache.Evict(instanceOcid)
+	}
+	if p.vnicAttachCache != nil {
+		p.vnicAttachCache.Evict(instanceOcid)
+	}
+	if p.bootVolAttachCache != nil {
+		p.bootVolAttachCache.Evict(instanceOcid)
+	}
+}
+
+// evictUnseenInstanceCaches removes all instance-scoped cache entries whose instance IDs were not
+// observed during a complete ListInstances call.
+func (p *DefaultProvider) evictUnseenInstanceCaches(seenInstanceIDs map[string]struct{}) {
+	evictUnseen := func(instanceID string) bool {
+		_, seen := seenInstanceIDs[instanceID]
+		return !seen
+	}
+	if p.instanceCache != nil {
+		p.instanceCache.EvictMatching(evictUnseen)
+	}
+	if p.vnicAttachCache != nil {
+		p.vnicAttachCache.EvictMatching(evictUnseen)
+	}
+	if p.bootVolAttachCache != nil {
+		p.bootVolAttachCache.EvictMatching(evictUnseen)
+	}
+}
+
 func (p *DefaultProvider) DeleteInstance(ctx context.Context, instanceOcid string) error {
 	_, err := p.computeClient.TerminateInstance(ctx, ocicore.TerminateInstanceRequest{
 		InstanceId: &instanceOcid,
 	})
 	if err != nil {
+		if oci.IsNotFound(err) {
+			p.evictInstanceCaches(instanceOcid)
+		}
 		return err
 	}
 
