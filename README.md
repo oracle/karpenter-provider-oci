@@ -37,6 +37,7 @@ See [Installation](docs/guide/installation.md).
   - [Configure IAM Policies for KPO to manage OCI resources](docs/guide/configure-iam-policies.md)
   - [Install KPO Helm Chart](docs/guide/installation-using-helm.md)
 - [Helm Chart Reference](docs/reference/helm-chart.md)
+- [OCI API Rate Limiter](docs/guide/rate-limiter.md)
 - [OCI v1beta1 API](docs/reference/v1beta1-api-raw.md)
 - [Scheduling Labels](docs/guide/scheduling-labels.md)
 - [Usage](docs/guide/usage.md)

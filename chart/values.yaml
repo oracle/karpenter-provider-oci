@@ -251,11 +251,11 @@ settings:
     # -- Disable the OCI client-side rate limiter.
     disable: true
     # -- Read QPS for the OCI client-side rate limiter. 0 uses the built-in default.
-    qpsRead: 0
+    qpsRead: 0.0
     # -- Read burst for the OCI client-side rate limiter. 0 uses the built-in default.
     burstRead: 0
     # -- Write QPS for the OCI client-side rate limiter. 0 uses the built-in default.
-    qpsWrite: 0
+    qpsWrite: 0.0
     # -- Write burst for the OCI client-side rate limiter. 0 uses the built-in default.
     burstWrite: 0
 
