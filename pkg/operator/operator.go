@@ -156,7 +156,7 @@ func createOperator(ctx context.Context, coreOp *operator.Operator,
 	instanceProvider := lo.Must(instance.NewProvider(ctx, ociClient, ociClient,
 		ociOptions.ClusterCompartmentId, instanceMetadataProvider, networkProvider,
 		vmTimeout, bmTimeout, ociOptions.InstanceLaunchTimeOutFailOver, instancePollInterval,
-		unavailableOfferings))
+		unavailableOfferings, ociOptions.EnableUnavailableOfferingsOnServiceLimitExceeded))
 
 	imageProvider := lo.Must(image.NewProvider(ctx, clientSet, ociClient,
 		ociOptions.PreBakedImageCompartmentId, "", coreOp.Elected()))

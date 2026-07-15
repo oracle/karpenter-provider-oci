@@ -237,6 +237,17 @@ Notes:
 - Set `replicas` high enough for the number of ADs or FDs you expect the workload to use.
 - The `labelSelector` must match the pod labels, or the scheduler will not calculate skew against the intended pod set.
 - Supported scheduling labels are documented in [Scheduling Labels](scheduling-labels.md).
+
+### How can Karpenter fall back when an OCI service limit or compartment quota is exceeded?
+
+By default, an OCI `LimitExceeded` or `QuotaExceeded` launch failure is returned immediately. To have Karpenter temporarily treat the failed offering as unavailable and try another compatible offering or NodePool, enable the Helm setting:
+
+```yaml
+settings:
+  enableUnavailableOfferingsOnServiceLimitExceeded: true
+```
+
+The unavailable-offerings cache is enabled by default for 180 seconds. Keep `settings.unavailableOfferingsTTLSeconds` greater than zero for cache-based fallback; adjust it if you want failed offerings retried sooner or later. This setting does not increase OCI limits or quotas—review and raise the applicable limit or quota when necessary.
   
 ### How can I list OKE images compatible with my OKE cluster?
 

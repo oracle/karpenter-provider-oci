@@ -275,6 +275,9 @@ settings:
   # marked unavailable and Karpenter does not route around capacity-exhausted offerings.
   unavailableOfferingsTTLSeconds: 180
 
+  # -- When true, OCI LimitExceeded and QuotaExceeded failures mark the offering unavailable. Disabled by default.
+  enableUnavailableOfferingsOnServiceLimitExceeded: false
+
   # -- Feature Gate configuration values. Feature Gates will follow the same graduation process and requirements as feature gates
   # in Kubernetes. More information here https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#feature-gates-for-alpha-or-beta-features
   featureGates:

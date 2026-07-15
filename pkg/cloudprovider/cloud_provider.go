@@ -59,13 +59,15 @@ type CloudProvider struct {
 	blockStorageProvider        blockstorage.Provider
 	npnProvider                 npn.Provider
 	repairPolicies              []cloudprovider.RepairPolicy
+	enableServiceLimitFallback  bool
 	initialized                 bool
 }
 
 func New(ctx context.Context, client client.Client, itp instancetype.Provider, imgp image.Provider,
 	nwp network.Provider, kkp kms.Provider, ip instance.Provider, pp placement.Provider,
 	cp capacityreservation.Provider, bsp blockstorage.Provider, npn npn.Provider,
-	repairPolicies []cloudprovider.RepairPolicy, startAsync <-chan struct{}) (*CloudProvider, error) {
+	repairPolicies []cloudprovider.RepairPolicy, enableServiceLimitFallback bool,
+	startAsync <-chan struct{}) (*CloudProvider, error) {
 	c := &CloudProvider{
 		kubeClient:                  client,
 		instanceTypeProvider:        itp,
@@ -77,6 +79,7 @@ func New(ctx context.Context, client client.Client, itp instancetype.Provider, i
 		capacityReservationProvider: cp,
 		blockStorageProvider:        bsp,
 		npnProvider:                 npn,
+		enableServiceLimitFallback:  enableServiceLimitFallback,
 	}
 
 	if len(repairPolicies) > 0 {
@@ -205,10 +208,9 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *corev1.NodeClaim)
 		if err != nil {
 			lg.Error(err, "cannot launch instance")
 			// TODO in capacity reservation case, what error will we get if there is no capacity?
-			// Host-capacity shortage and service-limit/compartment-quota failures are skippable:
-			// move on to the next shape and remember the error so we can surface an
-			// InsufficientCapacityError if every candidate shape is exhausted.
-			if instance.IsSkippableLaunchError(err) {
+			// Host-capacity shortage is always skippable. Service-limit/compartment-quota
+			// failures are skippable only when the service-limit fallback gate is enabled.
+			if instance.IsSkippableLaunchError(err, c.enableServiceLimitFallback) {
 				skipErr = err
 				continue
 			}
@@ -223,8 +225,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *corev1.NodeClaim)
 
 	if inst == nil {
 		// No instance type launched and at least one launch attempt failed due to a skippable
-		// capacity exhaustion (host-capacity shortage or service-limit/compartment-quota;
-		// non-skippable launch errors return earlier). Surface an InsufficientCapacityError so
+		// capacity exhaustion; non-skippable launch errors return earlier. Surface an InsufficientCapacityError so
 		// core Karpenter deletes the NodeClaim and reschedules, enabling fallback to other
 		// offerings / capacity types / NodePools.
 		if skipErr != nil {

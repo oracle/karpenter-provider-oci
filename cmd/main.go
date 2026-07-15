@@ -59,6 +59,7 @@ func main() {
 		op.BlockStorageProvider,
 		op.NpnProvider,
 		ociOptions.RepairPolicies,
+		ociOptions.EnableUnavailableOfferingsOnServiceLimitExceeded,
 		op.Elected(),
 	)
 

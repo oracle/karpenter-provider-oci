@@ -122,7 +122,7 @@ var _ = Describe("CloudProvider Integration Tests", func() {
 			cpgProvider))
 		cloudProvider = lo.Must(New(ctx, k8sClient, instancetypeProvider, imageProvider,
 			networkProvider, kmsProvider, instanceProvider, placementProvider,
-			crProvider, bsProvider, npnProvider, nil, fakes.NewDummyChannel()))
+			crProvider, bsProvider, npnProvider, nil, false, fakes.NewDummyChannel()))
 	})
 
 	It("should create nodeclaim with nodeclass hash", func() {
@@ -765,8 +765,9 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 		It("should return insufficient capacity when all instance types hit a service limit", func() {
 			launchCount := 0
 			cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
-				kubeClient:    kubeClient,
-				instanceTypes: []*instancetype.OciInstanceType{instanceA, instanceB},
+				kubeClient:                 kubeClient,
+				instanceTypes:              []*instancetype.OciInstanceType{instanceA, instanceB},
+				enableServiceLimitFallback: true,
 				imageProvider: &FakeImageProvider{
 					ResolveImageForShapeFn: func(_ context.Context, _ *v1beta1.ImageConfig,
 						_ string) (*image.ImageResolveResult, error) {
@@ -788,11 +789,40 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 			Expect(launchCount).To(Equal(2))
 		})
 
-		It("should fall back to the next shape when one shape hits a service limit", func() {
+		It("should return a create error when service limit fallback is disabled", func() {
 			launchCount := 0
 			cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
 				kubeClient:    kubeClient,
 				instanceTypes: []*instancetype.OciInstanceType{instanceA, instanceB},
+				imageProvider: &FakeImageProvider{
+					ResolveImageForShapeFn: func(_ context.Context, _ *v1beta1.ImageConfig,
+						_ string) (*image.ImageResolveResult, error) {
+						return imageResult, nil
+					},
+				},
+				instanceProvider: &FakeInstanceProvider{
+					LaunchInstanceFn: func(_ context.Context, _ *v1.NodeClaim, _ *v1beta1.OCINodeClass,
+						_ *instancetype.OciInstanceType, _ *image.ImageResolveResult, _ *network.NetworkResolveResult,
+						_ *kms.KmsKeyResolveResult, _ *placement.Proposal) (*instance.InstanceInfo, error) {
+						launchCount++
+						return nil, fakeServiceError{statusCode: 400, code: "LimitExceeded", message: "service limit exceeded"}
+					},
+				},
+			})
+
+			_, err := cp.Create(context.Background(), nodeClaim)
+			var createErr *cloudprovider.CreateError
+			Expect(errors.As(err, &createErr)).To(BeTrue())
+			Expect(cloudprovider.IsInsufficientCapacityError(err)).To(BeFalse())
+			Expect(launchCount).To(Equal(1))
+		})
+
+		It("should fall back to the next shape when one shape hits a service limit", func() {
+			launchCount := 0
+			cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
+				kubeClient:                 kubeClient,
+				instanceTypes:              []*instancetype.OciInstanceType{instanceA, instanceB},
+				enableServiceLimitFallback: true,
 				imageProvider: &FakeImageProvider{
 					ResolveImageForShapeFn: func(_ context.Context, _ *v1beta1.ImageConfig,
 						_ string) (*image.ImageResolveResult, error) {
@@ -920,6 +950,7 @@ type unitTestCloudProviderOptions struct {
 	capacityReservationProvider capacityreservation.Provider
 	npnProvider                 npn.Provider
 	repairPolicies              []cloudprovider.RepairPolicy
+	enableServiceLimitFallback  bool
 }
 
 func newUnitTestCloudProvider(opts unitTestCloudProviderOptions) *CloudProvider {
@@ -945,6 +976,7 @@ func newUnitTestCloudProvider(opts unitTestCloudProviderOptions) *CloudProvider 
 		capacityReservationProvider: &FakeCapacityReservationProvider{},
 		npnProvider:                 &FakeNpnProvider{},
 		repairPolicies:              opts.repairPolicies,
+		enableServiceLimitFallback:  opts.enableServiceLimitFallback,
 	}
 
 	if opts.imageProvider != nil {
@@ -1303,6 +1335,8 @@ var _ = Describe("CloudProvider NodePool Fallback", func() {
 	})
 
 	It("falls back to another NodePool when the preferred pool's launch hits a service limit", func() {
+		cp.enableServiceLimitFallback = true
+
 		// The preferred shape's launch fails with a service-limit (LimitExceeded) error. We emulate
 		// the production LaunchInstance defer by marking the offering unavailable on that error; the
 		// FakeInstanceProvider does not run the real defer. CloudProvider.Create classifies this as an
@@ -1557,6 +1591,8 @@ var _ = Describe("CloudProvider Compartment Scoping", func() {
 	})
 
 	It("keeps a different compartment schedulable when a QuotaExceeded failure is compartment-scoped", func() {
+		cp.enableServiceLimitFallback = true
+
 		// The launch into compartment A fails with QuotaExceeded. Emulate the production
 		// LaunchInstance defer by marking the offering unavailable scoped to compartment A; the
 		// FakeInstanceProvider does not run the real defer. CloudProvider.Create classifies this as an

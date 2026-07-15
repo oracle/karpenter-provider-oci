@@ -168,6 +168,10 @@ spec:
             - name: UNAVAILABLE_OFFERINGS_TTL_SECONDS
               value: "{{ .Values.settings.unavailableOfferingsTTLSeconds }}"
             {{- end }}
+            {{- if not (kindIs "invalid" .Values.settings.enableUnavailableOfferingsOnServiceLimitExceeded) }}
+            - name: ENABLE_UNAVAILABLE_OFFERINGS_ON_SERVICE_LIMIT_EXCEEDED
+              value: "{{ .Values.settings.enableUnavailableOfferingsOnServiceLimitExceeded }}"
+            {{- end }}
             {{- with .Values.settings.flexibleShapeConfigs }}
             - name: FLEXIBLE_SHAPE_CONFIGS
               value: {{ . | toJson | quote }}

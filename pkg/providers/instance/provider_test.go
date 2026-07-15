@@ -1209,11 +1209,13 @@ func TestProvider_LaunchInstance_MarksUnavailableOnSkippableError(t *testing.T) 
 	memory := lo.ToPtr(float32(16))
 
 	testCases := []struct {
-		name string
-		err  error
+		name             string
+		err              error
+		enableCacheEntry bool
 	}{
-		{name: "out of host capacity", err: outOfHostCapacityError()},
-		{name: "service limit exceeded", err: limitExceededError()},
+		{name: "out of host capacity", err: outOfHostCapacityError(), enableCacheEntry: true},
+		{name: "service limit exceeded", err: limitExceededError(), enableCacheEntry: false},
+		{name: "quota exceeded", err: quotaExceededError(), enableCacheEntry: false},
 	}
 
 	for _, tc := range testCases {
@@ -1240,10 +1242,9 @@ func TestProvider_LaunchInstance_MarksUnavailableOnSkippableError(t *testing.T) 
 				&instancetype.OciInstanceType{Shape: shape, SupportShapeConfig: true, Ocpu: ocpu, MemoryInGbs: memory},
 				imgRes, netRes, nil, pp)
 			require.Error(t, err)
-			// Host-capacity exhaustion and tenancy-scoped LimitExceeded apply regardless of
-			// compartment, so they are recorded under the tenancy-wide (empty compartment) scope.
-			assert.True(t, unavailable.IsUnavailable(shape, ocpu, memory, zone, corev1.CapacityTypeOnDemand, ""),
-				"expected the (shape, ocpu/memory, zone, capacity-type) offering to be marked unavailable")
+			assert.Equal(t, tc.enableCacheEntry,
+				unavailable.IsUnavailable(shape, ocpu, memory, zone, corev1.CapacityTypeOnDemand, ""),
+				"unexpected unavailable-offering cache entry")
 
 			// A different CPU/memory configuration of the same shape/zone/capacity-type must remain
 			// available, since only the failed config was observed to be out of capacity.
@@ -1252,6 +1253,42 @@ func TestProvider_LaunchInstance_MarksUnavailableOnSkippableError(t *testing.T) 
 				"a different flex config must not be suppressed by the failed config")
 		})
 	}
+}
+
+func TestProvider_LaunchInstance_MarksServiceLimitExceededWhenEnabled(t *testing.T) {
+	baseClaim := minimalNodeClaim()
+	baseNodeClass := minimalNodeClass()
+	imgRes := minimalImageResolve()
+	netRes := minimalNetworkResolve()
+	pp := minimalPlacement()
+	pp.Fd = nil
+
+	shape := testShapeE4Flex
+	zone := utils.AdToZoneLabelValue(pp.Ad)
+	ocpu := lo.ToPtr(float32(2))
+	memory := lo.ToPtr(float32(16))
+	unavailable := cache.NewUnavailableOfferings(cache.UnavailableOfferingsTTL)
+	p := &DefaultProvider{
+		computeClient:        &fakes.FakeCompute{LaunchErr: limitExceededError()},
+		clusterCompartmentId: "ocid1.compartment.oc1..parent",
+		instanceCache:        cache.NewDefaultGetOrLoadCache[*InstanceInfo](),
+		vnicAttachCache:      cache.NewDefaultGetOrLoadCache[[]*ocicore.VnicAttachment](),
+		bootVolAttachCache:   cache.NewDefaultGetOrLoadCache[[]*ocicore.BootVolumeAttachment](),
+		launchTimeoutVM:      10 * time.Minute,
+		launchTimeoutBM:      20 * time.Minute,
+		pollInterval:         time.Second,
+		unavailableOfferings: unavailable,
+		enableUnavailableOfferingsOnServiceLimitExceeded: true,
+	}
+	imdsp, err := instancemeta.NewProvider(context.TODO(), "10.0.0.1", []byte("CA"), ipV4SingleStack)
+	require.NoError(t, err)
+	p.instanceMetaProvider = imdsp
+
+	_, err = p.LaunchInstance(context.TODO(), baseClaim, baseNodeClass,
+		&instancetype.OciInstanceType{Shape: shape, SupportShapeConfig: true, Ocpu: ocpu, MemoryInGbs: memory},
+		imgRes, netRes, nil, pp)
+	require.Error(t, err)
+	assert.True(t, unavailable.IsUnavailable(shape, ocpu, memory, zone, corev1.CapacityTypeOnDemand, ""))
 }
 
 func TestProvider_LaunchInstance_MarksQuotaExceededScopedToCompartment(t *testing.T) {
@@ -1290,6 +1327,7 @@ func TestProvider_LaunchInstance_MarksQuotaExceededScopedToCompartment(t *testin
 		launchTimeoutBM:      20 * time.Minute,
 		pollInterval:         time.Second,
 		unavailableOfferings: unavailable,
+		enableUnavailableOfferingsOnServiceLimitExceeded: true,
 	}
 	imdsp, err := instancemeta.NewProvider(context.TODO(), "10.0.0.1", []byte("CA"), ipV4SingleStack)
 	require.NoError(t, err)

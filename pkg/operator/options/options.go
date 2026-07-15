@@ -26,30 +26,31 @@ import (
 )
 
 type Options struct {
-	ShapeMetaFile                          string
-	ShapeMetaRefreshIntervalHours          int
-	ClusterCompartmentId                   string
-	VcnCompartmentId                       string
-	OciVcnIpNative                         bool
-	PreBakedImageCompartmentId             string
-	ApiserverEndpoint                      string
-	IpFamiliesFlag                         *network.IpFamilyValue
-	OciAuthMethods                         AuthMethod
-	OciProfileName                         string
-	GlobalShapeConfigs                     []ociv1beta1.ShapeConfig
-	RepairPolicies                         []cloudprovider.RepairPolicy
-	InstanceLaunchTimeoutVMMins            int
-	InstanceLaunchTimeoutBMMins            int
-	InstanceOperationPollIntervalInSeconds int
-	InstanceLaunchTimeOutFailOver          bool
-	UnavailableOfferingsTTLSeconds         int
-	DisableRateLimiter                     bool
-	RateLimitQPSRead                       float64
-	RateLimitBurstRead                     int
-	RateLimitQPSWrite                      float64
-	RateLimitBurstWrite                    int
-	setFlags                               map[string]bool
-	parsed                                 bool
+	ShapeMetaFile                                    string
+	ShapeMetaRefreshIntervalHours                    int
+	ClusterCompartmentId                             string
+	VcnCompartmentId                                 string
+	OciVcnIpNative                                   bool
+	PreBakedImageCompartmentId                       string
+	ApiserverEndpoint                                string
+	IpFamiliesFlag                                   *network.IpFamilyValue
+	OciAuthMethods                                   AuthMethod
+	OciProfileName                                   string
+	GlobalShapeConfigs                               []ociv1beta1.ShapeConfig
+	RepairPolicies                                   []cloudprovider.RepairPolicy
+	InstanceLaunchTimeoutVMMins                      int
+	InstanceLaunchTimeoutBMMins                      int
+	InstanceOperationPollIntervalInSeconds           int
+	InstanceLaunchTimeOutFailOver                    bool
+	UnavailableOfferingsTTLSeconds                   int
+	EnableUnavailableOfferingsOnServiceLimitExceeded bool
+	DisableRateLimiter                               bool
+	RateLimitQPSRead                                 float64
+	RateLimitBurstRead                               int
+	RateLimitQPSWrite                                float64
+	RateLimitBurstWrite                              int
+	setFlags                                         map[string]bool
+	parsed                                           bool
 }
 
 type optionsKey struct{}
@@ -123,6 +124,9 @@ Example in a JSON format:
 		int(cache.UnavailableOfferingsTTL.Seconds()),
 		"How long, in seconds, an offering observed to be out of host capacity is treated as "+
 			"unavailable before Karpenter retries it. Set to 0 to disable the unavailable-offerings cache")
+	fs.BoolVar(&o.EnableUnavailableOfferingsOnServiceLimitExceeded,
+		"enable-unavailable-offerings-on-service-limit-exceeded", false,
+		"Mark offerings unavailable when OCI service limits are exceeded")
 	fs.BoolVar(&o.DisableRateLimiter, "disable-rate-limiter", true,
 		"Disable the OCI client-side rate limiter")
 	fs.Float64Var(&o.RateLimitQPSRead, "rate-limit-qps-read", 0,

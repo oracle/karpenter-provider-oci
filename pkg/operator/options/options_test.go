@@ -249,6 +249,7 @@ var _ = Describe("Test Operator Options", func() {
 			"--instance-launch-timeout-failover", // "true"
 			"--unavailable-offerings-ttl-seconds",
 			"90",
+			"--enable-unavailable-offerings-on-service-limit-exceeded",
 			"--disable-rate-limiter",
 			"--rate-limit-qps-read",
 			"21",
@@ -293,6 +294,7 @@ var _ = Describe("Test Operator Options", func() {
 		Expect(o.InstanceOperationPollIntervalInSeconds).To(Equal(5))
 		Expect(o.InstanceLaunchTimeOutFailOver).To(BeTrue())
 		Expect(o.UnavailableOfferingsTTLSeconds).To(Equal(90))
+		Expect(o.EnableUnavailableOfferingsOnServiceLimitExceeded).To(BeTrue())
 		Expect(o.DisableRateLimiter).To(BeTrue())
 		Expect(o.RateLimitQPSRead).To(Equal(float64(21)))
 		Expect(o.RateLimitBurstRead).To(Equal(6))

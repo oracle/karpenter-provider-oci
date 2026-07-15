@@ -78,19 +78,20 @@ type Provider interface {
 }
 
 type DefaultProvider struct {
-	computeClient         oci.ComputeClient
-	workRequestClient     oci.WorkRequestClient
-	clusterCompartmentId  string
-	instanceMetaProvider  instancemeta.Provider
-	networkProvider       network.Provider
-	instanceCache         *cache.GetOrLoadCache[*InstanceInfo]
-	vnicAttachCache       *cache.GetOrLoadCache[[]*ocicore.VnicAttachment]
-	bootVolAttachCache    *cache.GetOrLoadCache[[]*ocicore.BootVolumeAttachment]
-	launchTimeoutVM       time.Duration
-	launchTimeoutBM       time.Duration
-	launchTimeOutFailOver bool
-	pollInterval          time.Duration
-	unavailableOfferings  *cache.UnavailableOfferings
+	computeClient                                    oci.ComputeClient
+	workRequestClient                                oci.WorkRequestClient
+	clusterCompartmentId                             string
+	instanceMetaProvider                             instancemeta.Provider
+	networkProvider                                  network.Provider
+	instanceCache                                    *cache.GetOrLoadCache[*InstanceInfo]
+	vnicAttachCache                                  *cache.GetOrLoadCache[[]*ocicore.VnicAttachment]
+	bootVolAttachCache                               *cache.GetOrLoadCache[[]*ocicore.BootVolumeAttachment]
+	launchTimeoutVM                                  time.Duration
+	launchTimeoutBM                                  time.Duration
+	launchTimeOutFailOver                            bool
+	pollInterval                                     time.Duration
+	unavailableOfferings                             *cache.UnavailableOfferings
+	enableUnavailableOfferingsOnServiceLimitExceeded bool
 }
 
 func NewProvider(ctx context.Context, computeClient oci.ComputeClient,
@@ -101,7 +102,8 @@ func NewProvider(ctx context.Context, computeClient oci.ComputeClient,
 	launchTimeoutVM, launchTimeoutBM time.Duration,
 	launchTimeOutFailOver bool,
 	pollInterval time.Duration,
-	unavailableOfferings *cache.UnavailableOfferings) (*DefaultProvider, error) {
+	unavailableOfferings *cache.UnavailableOfferings,
+	enableUnavailableOfferingsOnServiceLimitExceeded bool) (*DefaultProvider, error) {
 	p := &DefaultProvider{
 		computeClient:         computeClient,
 		workRequestClient:     workRequestClient,
@@ -116,6 +118,7 @@ func NewProvider(ctx context.Context, computeClient oci.ComputeClient,
 		launchTimeOutFailOver: launchTimeOutFailOver,
 		pollInterval:          pollInterval,
 		unavailableOfferings:  unavailableOfferings,
+		enableUnavailableOfferingsOnServiceLimitExceeded: enableUnavailableOfferingsOnServiceLimitExceeded,
 	}
 
 	return p, nil
@@ -156,15 +159,14 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 		isPreemptible = true
 	}
 
-	// When a launch attempt fails because of a skippable capacity exhaustion (host-capacity
-	// shortage or service-limit/compartment-quota), record the
+	// When a launch attempt fails because of a skippable capacity exhaustion, record the
 	// (shape, ocpu/memory, AD/zone, capacity-type) offering as unavailable so it is excluded from
 	// offering availability until the cache entry expires, enabling spot->on-demand and
 	// cross-NodePool fallback. Scoping by the flexible-shape CPU/memory configuration keeps a
 	// failure for one config from suppressing the shape's other configs.
 	if p.unavailableOfferings != nil {
 		defer func() {
-			if !IsSkippableLaunchError(err) {
+			if !IsSkippableLaunchError(err, p.enableUnavailableOfferingsOnServiceLimitExceeded) {
 				return
 			}
 

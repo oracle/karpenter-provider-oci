@@ -29,11 +29,12 @@ func IsNoCapacityError(err error) bool {
 }
 
 // IsSkippableLaunchError returns true for launch failures that should be skipped
-// in favor of trying another shape/offering: host-capacity exhaustion and
-// service-limit/compartment-quota exhaustion. When every candidate shape fails
-// with a skippable error, the caller surfaces an InsufficientCapacityError so
-// core Karpenter deletes and reschedules the NodeClaim onto another offering or
-// NodePool.
-func IsSkippableLaunchError(err error) bool {
-	return IsNoCapacityError(err) || oci.IsServiceLimitExceeded(err)
+// in favor of trying another shape/offering. Host-capacity exhaustion is always
+// skippable. Service-limit and compartment-quota exhaustion are skippable only
+// when unavailable-offering fallback for service limits is enabled.
+func IsSkippableLaunchError(err error, enableServiceLimitFallback bool) bool {
+	if IsNoCapacityError(err) {
+		return true
+	}
+	return enableServiceLimitFallback && oci.IsServiceLimitExceeded(err)
 }

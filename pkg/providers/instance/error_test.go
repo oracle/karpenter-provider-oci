@@ -58,9 +58,10 @@ func quotaExceededError() error {
 
 func TestIsSkippableLaunchError(t *testing.T) {
 	testCases := []struct {
-		name string
-		err  error
-		want bool
+		name                       string
+		err                        error
+		enableServiceLimitFallback bool
+		want                       bool
 	}{
 		{
 			name: "nil error",
@@ -78,23 +79,40 @@ func TestIsSkippableLaunchError(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "service limit exceeded",
+			name: "service limit exceeded gate disabled",
 			err:  limitExceededError(),
-			want: true,
+			want: false,
 		},
 		{
-			name: "quota exceeded",
+			name:                       "service limit exceeded gate enabled",
+			err:                        limitExceededError(),
+			enableServiceLimitFallback: true,
+			want:                       true,
+		},
+		{
+			name: "quota exceeded gate disabled",
 			err: fakeServiceError{
 				httpStatus: http.StatusBadRequest,
 				code:       oci.QuotaExceeded,
 				message:    "compartment quota exceeded",
 			},
-			want: true,
+			want: false,
 		},
 		{
-			name: "wrapped service limit exceeded",
-			err:  pkgerrors.Wrap(limitExceededError(), "wrapped"),
-			want: true,
+			name: "quota exceeded gate enabled",
+			err: fakeServiceError{
+				httpStatus: http.StatusBadRequest,
+				code:       oci.QuotaExceeded,
+				message:    "compartment quota exceeded",
+			},
+			enableServiceLimitFallback: true,
+			want:                       true,
+		},
+		{
+			name:                       "wrapped service limit exceeded gate enabled",
+			err:                        pkgerrors.Wrap(limitExceededError(), "wrapped"),
+			enableServiceLimitFallback: true,
+			want:                       true,
 		},
 		{
 			name: "unrelated service error",
@@ -114,7 +132,7 @@ func TestIsSkippableLaunchError(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, IsSkippableLaunchError(tc.err))
+			assert.Equal(t, tc.want, IsSkippableLaunchError(tc.err, tc.enableServiceLimitFallback))
 		})
 	}
 }
