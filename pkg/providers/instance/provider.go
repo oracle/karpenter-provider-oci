@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -91,6 +92,42 @@ type DefaultProvider struct {
 	launchTimeOutFailOver bool
 	pollInterval          time.Duration
 	unavailableOfferings  *cache.UnavailableOfferings
+}
+
+type workRequestServiceError struct {
+	code    string
+	message string
+}
+
+func (e workRequestServiceError) Error() string {
+	return e.message
+}
+
+func (e workRequestServiceError) GetHTTPStatusCode() int {
+	return http.StatusBadRequest
+}
+
+func (e workRequestServiceError) GetMessage() string {
+	return e.message
+}
+
+func (e workRequestServiceError) GetCode() string {
+	return e.code
+}
+
+func (e workRequestServiceError) GetOpcRequestID() string {
+	return ""
+}
+
+func newWorkRequestServiceError(item ociwr.WorkRequestError) error {
+	message := lo.FromPtr(item.Message)
+	if message == "" {
+		message = "work-request failed"
+	}
+	return workRequestServiceError{
+		code:    lo.FromPtr(item.Code),
+		message: message,
+	}
 }
 
 func NewProvider(ctx context.Context, computeClient oci.ComputeClient,
@@ -307,8 +344,8 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 				if listWrErr != nil {
 					return nil, errors.New("work-request failed")
 				}
-				if len(errResp.Items) > 0 && errResp.Items[0].Message != nil {
-					err = errors.New(*errResp.Items[0].Message)
+				if len(errResp.Items) > 0 {
+					err = newWorkRequestServiceError(errResp.Items[0])
 					if oci.IsOutOfHostCapacity(err) {
 						return nil, NoCapacityError{}
 					}

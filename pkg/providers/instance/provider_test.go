@@ -1644,6 +1644,77 @@ func TestProvider_LaunchInstance_WorkRequestOutOfHostCapacity(t *testing.T) {
 	assert.Equal(t, 1, fwr.ListCount.Get())
 }
 
+func TestProvider_LaunchInstance_WorkRequestServiceLimitExceeded(t *testing.T) {
+	fc := &fakes.FakeCompute{}
+	fwr := &fakes.FakeWorkRequest{}
+
+	fc.OnLaunch = func(ctx context.Context, r ocicore.LaunchInstanceRequest) (ocicore.LaunchInstanceResponse, error) {
+		return ocicore.LaunchInstanceResponse{
+			Instance: ocicore.Instance{Id: lo.ToPtr("ocid1.instance.oc1..new")},
+			Etag:     lo.ToPtr("etag-new"),
+			RawResponse: &http.Response{
+				StatusCode: 200,
+				Header: http.Header{
+					"Opc-Work-Request-Id": []string{"wr-launch-123"},
+				},
+			},
+		}, nil
+	}
+
+	fwr.GetResp = ociwr.GetWorkRequestResponse{
+		WorkRequest: ociwr.WorkRequest{
+			Status:       ociwr.WorkRequestStatusFailed,
+			TimeFinished: &common.SDKTime{Time: time.Now()},
+			TimeStarted:  &common.SDKTime{Time: time.Now()},
+		},
+	}
+	fwr.ListErrorsResp = ociwr.ListWorkRequestErrorsResponse{
+		Items: []ociwr.WorkRequestError{{
+			Code:      lo.ToPtr("LimitExceeded"),
+			Message:   lo.ToPtr("The following service limits were exceeded: standard-e4-core-count"),
+			Timestamp: &common.SDKTime{Time: time.Now()},
+		}},
+	}
+
+	imdsp, err := instancemeta.NewProvider(context.TODO(), "10.0.0.1", []byte("CA"), ipV4SingleStack)
+	require.NoError(t, err)
+	unavailable := cache.NewUnavailableOfferings(cache.UnavailableOfferingsTTL)
+	p := &DefaultProvider{
+		computeClient:        fc,
+		workRequestClient:    fwr,
+		instanceMetaProvider: imdsp,
+		clusterCompartmentId: "ocid1.compartment.oc1..parent",
+		launchTimeoutVM:      10 * time.Minute,
+		launchTimeoutBM:      20 * time.Minute,
+		pollInterval:         time.Millisecond,
+		unavailableOfferings: unavailable,
+	}
+
+	ocpu := lo.ToPtr(float32(2))
+	memory := lo.ToPtr(float32(16))
+	it := &instancetype.OciInstanceType{
+		InstanceType: cloudprovider.InstanceType{
+			Name:      testShapeE4Flex,
+			Offerings: cloudprovider.Offerings{makeOfferingWithCapType(corev1.CapacityTypeOnDemand)},
+		},
+		Shape:              testShapeE4Flex,
+		SupportShapeConfig: true,
+		Ocpu:               ocpu,
+		MemoryInGbs:        memory,
+	}
+	pp := minimalPlacement()
+	pp.Fd = nil
+
+	_, err = p.LaunchInstance(context.TODO(), minimalNodeClaim(), minimalNodeClass(), it, minimalImageResolve(),
+		minimalNetworkResolve(), nil, pp)
+	require.Error(t, err)
+	assert.True(t, IsSkippableLaunchError(err))
+	assert.Contains(t, err.Error(), "service limits were exceeded")
+	assert.True(t, unavailable.IsUnavailable(testShapeE4Flex, ocpu, memory, utils.AdToZoneLabelValue(pp.Ad),
+		corev1.CapacityTypeOnDemand, ""))
+	assert.Equal(t, 1, fwr.ListCount.Get())
+}
+
 func TestProvider_LaunchInstance_Timeout(t *testing.T) {
 	fc := &fakes.FakeCompute{}
 	fwr := &fakes.FakeWorkRequest{}
