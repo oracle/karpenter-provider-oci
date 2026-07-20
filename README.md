@@ -48,6 +48,7 @@ See [Installation](docs/guide/installation.md).
   - [Influence scheduling decisions with `NodeOverlay`](docs/guide/usage.md#influence-scheduling-decisions-with-nodeoverlay)
   - [Launch worker nodes for an OciIpNativeCNI cluster](docs/guide/usage.md#launch-worker-nodes-for-an-ociipnativecni-cluster)
 - [Advanced Use Cases](docs/guide/advanced-use-cases.md)
+  - [Oracle Cloud Agent Plugins](docs/guide/agent-plugins.md)
   - [Spot capacity (OCI preemptible)](docs/guide/advanced-use-cases.md#spot-capacity-oci-preemptible)
   - [Reserved capacity (OCI capacity reservations)](docs/guide/advanced-use-cases.md#reserved-capacity-oci-capacity-reservations)
   - [Burstable instances (flex shapes)](docs/guide/advanced-use-cases.md#burstable-instances-flex-shapes)

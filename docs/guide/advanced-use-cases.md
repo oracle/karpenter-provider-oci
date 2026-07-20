@@ -1,5 +1,9 @@
 # Advanced Use Cases
 
+### Oracle Cloud Agent Plugins
+
+For Oracle Cloud Agent plugin use cases, prerequisites, and configuration examples, see [Oracle Cloud Agent plugins](agent-plugins.md).
+
 ### Spot capacity (OCI preemptible)
 
 Configure the `NodePool` capacity type to `spot`:

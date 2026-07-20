@@ -223,7 +223,7 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 
 	launchOptions := BuildLaunchOptions(nodeClass.Spec.LaunchOptions)
 
-	agentConfig := buildAgentConfig(nodeClass.Spec.AgentList)
+	agentConfig := buildAgentConfig(nodeClass.Spec.AgentPlugins)
 
 	freeFormTags, err := buildFreeFormTags(nodeClass, nodeClaim)
 	if err != nil {
@@ -699,12 +699,12 @@ func buildShapeConfigFromInstanceType(it *instancetype.OciInstanceType) *ocicore
 	return l
 }
 
-func buildAgentConfig(agentList []string) *ocicore.LaunchInstanceAgentConfigDetails {
-	if len(agentList) == 0 {
+func buildAgentConfig(agentPlugins []string) *ocicore.LaunchInstanceAgentConfigDetails {
+	if len(agentPlugins) == 0 {
 		return nil
 	}
 	return &ocicore.LaunchInstanceAgentConfigDetails{
-		PluginsConfig: lo.Map(agentList, func(name string, _ int) ocicore.InstanceAgentPluginConfigDetails {
+		PluginsConfig: lo.Map(agentPlugins, func(name string, _ int) ocicore.InstanceAgentPluginConfigDetails {
 			return ocicore.InstanceAgentPluginConfigDetails{
 				Name:         lo.ToPtr(name),
 				DesiredState: ocicore.InstanceAgentPluginConfigDetailsDesiredStateEnabled,

@@ -94,14 +94,14 @@ type OCINodeClassSpec struct {
 	// +optional
 	LaunchOptions *LaunchOptions `json:"launchOptions,omitempty"`
 
-	// AgentList is a list of Oracle Cloud Agent plugins to enable on the launched instance.
+	// AgentPlugins is a list of Oracle Cloud Agent plugins to enable on the launched instance.
 	// Each entry must be the exact plugin name as listed by the OCI ListInstanceagentAvailablePlugins
 	// API (for example, "Bastion", "Block Volume Management", "Compute Instance Monitoring",
-	// "OS Management Service Agent"). Each listed plugin is set to ENABLED at launch time;
+	// "OS Management Hub Agent"). Each listed plugin is set to ENABLED at launch time;
 	// any plugin not listed is left at its image default. Unknown plugin names are accepted by
 	// this provider but ignored by the OCI control plane.
 	// +optional
-	AgentList []string `json:"agentList,omitempty"`
+	AgentPlugins []string `json:"agentPlugins,omitempty"`
 }
 
 type VolumeType string

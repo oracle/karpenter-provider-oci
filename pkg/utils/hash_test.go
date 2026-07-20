@@ -133,7 +133,7 @@ func TestHashNodeClassSpec_StaticFieldsCloning(t *testing.T) {
 			PreBootstrapInitScript:  &staticValue,
 			PostBootstrapInitScript: &staticValue,
 			SshAuthorizedKeys:       []string{"ssh-rsa AAA..."},
-			AgentList:               []string{"Bastion"},
+			AgentPlugins:            []string{"Bastion"},
 		},
 	}
 
@@ -154,12 +154,12 @@ func TestHashNodeClassSpec_StaticFieldsCloning(t *testing.T) {
 	require.NotEqual(t, initialHash, hashAfterStaticChange,
 		fmt.Sprintf("Hash must change when static field changes, but did not (still '%v')", initialHash))
 
-	// Mutate the AgentList static field, verify hash DOES change
+	// Mutate the AgentPlugins static field, verify hash DOES change
 	baselineHash := HashNodeClassSpec(nodeClass)
-	nodeClass.Spec.AgentList = []string{"Bastion", "Compute Instance Monitoring"}
-	hashAfterAgentListChange := HashNodeClassSpec(nodeClass)
-	require.NotEqual(t, baselineHash, hashAfterAgentListChange,
-		fmt.Sprintf("Hash must change when AgentList changes, but did not (still '%v')", baselineHash))
+	nodeClass.Spec.AgentPlugins = []string{"Bastion", "Compute Instance Monitoring"}
+	hashAfterAgentPluginsChange := HashNodeClassSpec(nodeClass)
+	require.NotEqual(t, baselineHash, hashAfterAgentPluginsChange,
+		fmt.Sprintf("Hash must change when AgentPlugins changes, but did not (still '%v')", baselineHash))
 }
 
 func TestKarpenterHash_NewOptionalAttributes_shouldNotChange(t *testing.T) {

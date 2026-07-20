@@ -678,19 +678,19 @@ func (s *E2ETestSuite) TestAgentConfig() {
 
 		expectedPlugins := []string{"Compute Instance Monitoring"}
 		require.NoError(t, s.patchOCINodeClass(func(p *ociv1beta1.OCINodeClass) {
-			p.Spec.AgentList = expectedPlugins
-		}), "Failed to patch OCINodeClass with agentList")
+			p.Spec.AgentPlugins = expectedPlugins
+		}), "Failed to patch OCINodeClass with agentPlugins")
 
 		err := s.waitAndVerifyNodes(s.verifyAgentConfig, expectedPlugins)
-		require.NoError(t, err, "Nodes should reflect the agentList configuration")
+		require.NoError(t, err, "Nodes should reflect the agentPlugins configuration")
 
 		err = s.checkPodsReady(s.testConfig.TestDeployment.Name, int(s.testConfig.TestDeployment.Replicas))
 		require.NoError(t, err, "All pods should be running after AgentConfig test")
 
-		// Reset agentList so it does not leak into subsequent tests.
+		// Reset agentPlugins so it does not leak into subsequent tests.
 		require.NoError(t, s.patchOCINodeClass(func(p *ociv1beta1.OCINodeClass) {
-			p.Spec.AgentList = nil
-		}), "Failed to reset OCINodeClass agentList")
+			p.Spec.AgentPlugins = nil
+		}), "Failed to reset OCINodeClass agentPlugins")
 		t.Log("AgentConfig test successful")
 	})
 }

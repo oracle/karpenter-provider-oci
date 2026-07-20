@@ -786,8 +786,8 @@ func (in *OCINodeClassSpec) DeepCopyInto(out *OCINodeClassSpec) {
 		*out = new(LaunchOptions)
 		(*in).DeepCopyInto(*out)
 	}
-	if in.AgentList != nil {
-		in, out := &in.AgentList, &out.AgentList
+	if in.AgentPlugins != nil {
+		in, out := &in.AgentPlugins, &out.AgentPlugins
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
