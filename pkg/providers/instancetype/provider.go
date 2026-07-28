@@ -905,12 +905,12 @@ func CheckTaintsAndPrintWarnings(ctx context.Context, nodeClaim *corev1.NodeClai
 
 	if !checkTaintExists(nodeClaim.Spec.Taints, NvidiaGpuTaintKey) &&
 		!checkTaintExists(nodeClaim.Spec.Taints, AmdGpuTaintKey) {
-		lg.Info(fmt.Sprintf("NodeCalim doesn't have taints '%s' or '%s' will not offer GPU shapes",
+		lg.Info(fmt.Sprintf("NodeClaim missing taint '%s' or '%s'; not offering GPU shapes",
 			NvidiaGpuTaintKey, AmdGpuTaintKey))
 	}
 
 	if !checkTaintExists(nodeClaim.Spec.Taints, PreemptibleTaintKey) {
-		lg.Info(fmt.Sprintf("NodeCalim doesn't have taint '%s' will not offer preemptible shape",
+		lg.Info(fmt.Sprintf("NodeClaim missing taint '%s'; not offering preemptible shapes",
 			PreemptibleTaintKey))
 	}
 }
