@@ -652,9 +652,9 @@ func kubeReservedResources(shape *ocicore.Shape, ocpu float32,
 	}
 
 	res := v1.ResourceList{
-		// round-up cpu, and show memory as Mi
+		// round-up cpu; memoryRes is in GiB and resource.NewQuantity takes bytes, so scale by 1024^3
 		v1.ResourceCPU:    *resource.NewMilliQuantity(int64(math.Ceil(float64(cpuRes))), resource.DecimalSI),
-		v1.ResourceMemory: *resource.NewQuantity(int64(math.Ceil(float64(memoryRes*1024))), resource.BinarySI),
+		v1.ResourceMemory: *resource.NewQuantity(int64(math.Ceil(float64(memoryRes)*1024*1024*1024)), resource.BinarySI),
 	}
 
 	var override map[string]string

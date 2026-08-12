@@ -2020,7 +2020,8 @@ func TestKubeReservedResources(t *testing.T) {
 			nc:    &ociv1beta1.OCINodeClass{},
 			want: map[string]string{
 				"cpu":    "85m",
-				"memory": "1844",
+				// 8 GiB shape -> 0.20*(8-4)+1 = 1.8 GiB reserved, in bytes (float32)
+				"memory": "1932735232",
 			},
 		},
 		{
@@ -2031,7 +2032,8 @@ func TestKubeReservedResources(t *testing.T) {
 			nc:    &ociv1beta1.OCINodeClass{},
 			want: map[string]string{
 				"cpu":    "72m",
-				"memory": "1844",
+				// 8 GiB shape -> 0.20*(8-4)+1 = 1.8 GiB reserved, in bytes (float32)
+				"memory": "1932735232",
 			},
 		},
 		{
@@ -2050,7 +2052,8 @@ func TestKubeReservedResources(t *testing.T) {
 			},
 			want: map[string]string{
 				"cpu":    "300m",
-				"memory": "1844",
+				// 8 GiB shape -> 0.20*(8-4)+1 = 1.8 GiB reserved, in bytes (float32)
+				"memory": "1932735232",
 			},
 		},
 		{
@@ -2103,6 +2106,35 @@ func TestKubeReservedResources(t *testing.T) {
 				assert.True(t, want.Equal(got[v1.ResourceName(key)]), "key: %s", key)
 			}
 		})
+	}
+}
+
+// The reserve formula computes GiB while resource.NewQuantity takes bytes. Dropping the
+// 1024^2 factor still yields a plausible-looking positive quantity — just a few kilobytes
+// instead of a few gibibytes — so an exact-value assertion can pass while the reserve is
+// effectively zero. Modelled allocatable then runs ~4 GiB above the kubelet's real
+// allocatable, and Karpenter repeatedly launches nodes the scheduler rejects for
+// Insufficient memory. Assert the magnitude, which pins the units.
+func TestKubeReservedResources_MemoryIsScaledToBytes(t *testing.T) {
+	t.Parallel()
+	shape := &ocicore.Shape{Shape: lo.ToPtr("VM.Standard.E5.Flex")}
+
+	tests := []struct {
+		gbs      float32
+		wantGiB  float64
+		tolerate float64
+	}{
+		{gbs: 8, wantGiB: 1.8},   // 0.20*(8-4)+1     = 1.8
+		{gbs: 16, wantGiB: 2.6},  // 0.10*(16-8)+1.8  = 2.6
+		{gbs: 34, wantGiB: 3.68}, // 0.06*(34-16)+2.6 = 3.68
+		{gbs: 48, wantGiB: 4.52}, // 0.06*(48-16)+2.6 = 4.52
+	}
+
+	for _, tt := range tests {
+		got := kubeReservedResources(shape, 2, tt.gbs, &ociv1beta1.OCINodeClass{})
+		gib := float64(got.Memory().Value()) / (1024 * 1024 * 1024)
+		assert.InDelta(t, tt.wantGiB, gib, 0.01,
+			"gbs=%v reserved %d bytes, want ~%v GiB", tt.gbs, got.Memory().Value(), tt.wantGiB)
 	}
 }
 
