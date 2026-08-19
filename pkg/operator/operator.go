@@ -139,6 +139,11 @@ func createOperator(ctx context.Context, coreOp *operator.Operator,
 		shapeMetaFile, refreshInterval, ociOptions.GlobalShapeConfigs,
 		ociOptions.IpFamiliesFlag.IpFamilies,
 		unavailableOfferings,
+		instancetype.VMMemoryOverheadConfig{
+			BaseMiB:  ociOptions.VMMemoryOverheadBaseMiB,
+			PerGBMiB: ociOptions.VMMemoryOverheadPerGBMiB,
+			Percent:  ociOptions.VMMemoryOverheadPercent,
+		},
 		coreOp.Elected()))
 
 	driftCaches := instance.NewDriftCaches()

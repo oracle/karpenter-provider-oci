@@ -278,6 +278,29 @@ settings:
   # -- When true, OCI LimitExceeded and QuotaExceeded failures mark the offering unavailable. Disabled by default.
   enableUnavailableOfferingsOnServiceLimitExceeded: false
 
+  # VM memory overhead. OCI reserves memory below the guest, so a shape advertised as 32 GB
+  # presents roughly 30.9 GiB of MemTotal to Linux. Karpenter must estimate a node's memory
+  # before the node exists, so this is subtracted from every shape's modelled capacity.
+  #
+  # These defaults are deliberately pessimistic, because the two failure modes are not
+  # symmetric: over-estimating capacity makes Karpenter launch a node the pending pod cannot
+  # fit on, and with no feedback loop it repeats that launch indefinitely. Under-estimating
+  # only wastes a little memory. The goal is a safe number, not an exact one.
+  #
+  # Defaults are a lower bound on measured capacity across every published measurement
+  # (A1/E4/E5/Standard3, 8-128 GB) -- see issue #7 -- with deliberate headroom on top, so that
+  # an image build or shape family nobody has measured is unlikely to breach them. Tighten them
+  # only if you have measured `node.status.capacity.memory` for your own shapes and images.
+  vmMemoryOverhead:
+    # -- Fixed part of the overhead, in MiB.
+    baseMiB: 600
+    # -- Part of the overhead that scales with declared memory, in MiB per GiB.
+    perGBMiB: 19
+    # -- Overhead as a fraction of declared memory (0.075 == 7.5%), matching the AWS provider's
+    # model. 0 disables it. When set, the larger of the two forms is used, so this can only make
+    # the estimate more conservative.
+    percent: 0
+
   # -- Feature Gate configuration values. Feature Gates will follow the same graduation process and requirements as feature gates
   # in Kubernetes. More information here https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#feature-gates-for-alpha-or-beta-features
   featureGates:
