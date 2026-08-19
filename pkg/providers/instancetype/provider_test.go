@@ -1827,7 +1827,7 @@ func TestEvictionThreshold(t *testing.T) {
 				},
 			},
 			want: map[string]string{
-				"memory": "3355444", // 32Mi * 0.1 = 3,355,443.2 bytes, ceiled to 3,355,444
+				"memory": "3435973837", // 32Gi * 0.1 = 3,435,973,836.8 bytes, ceiled
 			},
 		},
 		{
@@ -1879,7 +1879,7 @@ func TestEvictionThreshold(t *testing.T) {
 				},
 			},
 			want: map[string]string{
-				"memory":            "3355444",
+				"memory":            "3435973837",
 				"ephemeral-storage": "10000000000",
 			},
 		},
@@ -2942,5 +2942,86 @@ func TestListInstanceTypes_NoDeadlockWithConcurrentWriter(t *testing.T) {
 		close(stopWriter)
 		t.Fatal("ListInstanceTypes deadlocked with a concurrent writer: " +
 			"recursive p.lock.RLock in the ListInstanceTypes call chain")
+	}
+}
+
+func TestEvictionThreshold_PercentageUsesGiBBase(t *testing.T) {
+	// Regression for the 1024x unit error: resource.NewQuantity takes bytes, so a GiB figure
+	// must be scaled by 1024^3. Scaling by 1024^2 made every percentage-based threshold 1024x
+	// too small, which under-reports overhead and so over-estimates allocatable memory --
+	// the same failure mode that makes Karpenter relaunch nodes a pod can never fit on.
+	nc := evictionTestNodeClass(map[string]string{MemoryAvailable: "10%"}, nil)
+
+	got := evictionThreshold(32, nc)[v1.ResourceMemory]
+
+	pct := 0.10
+	want := int64(pct * float64(32*1024*1024*1024)) // 10% of 32 GiB, in bytes
+	assert.InDelta(t, want, got.Value(), float64(want)*0.001,
+		"expected ~%d bytes (3.2 GiB), got %d", want, got.Value())
+}
+
+func TestEvictionThreshold_AbsoluteSignalIgnoresBase(t *testing.T) {
+	// Absolute signals are parsed directly and must not depend on the memory base at all.
+	nc := evictionTestNodeClass(map[string]string{MemoryAvailable: "500Mi"}, nil)
+
+	got := evictionThreshold(32, nc)[v1.ResourceMemory]
+
+	assert.Equal(t, int64(500*1024*1024), got.Value())
+}
+
+func TestEvictionThreshold_ReadsSoftAndHardFromTheirOwnMaps(t *testing.T) {
+	// Both blocks previously read EvictionHard for memory and EvictionSoft for nodefs, so
+	// EvictionSoft[memory.available] and EvictionHard[nodefs.available] were never consulted.
+	tests := []struct {
+		name       string
+		hard, soft map[string]string
+		wantMemPct float64
+		wantDisk   bool
+	}{
+		{
+			name:       "soft memory larger than hard is respected",
+			hard:       map[string]string{MemoryAvailable: "1%"},
+			soft:       map[string]string{MemoryAvailable: "50%"},
+			wantMemPct: 0.50, // MaxResources picks the larger
+			wantDisk:   false,
+		},
+		{
+			name:       "hard nodefs is read",
+			hard:       map[string]string{MemoryAvailable: "10%", NodeFSAvailable: "10%"},
+			wantMemPct: 0.10,
+			wantDisk:   true,
+		},
+		{
+			name:       "soft-only config still produces a threshold",
+			soft:       map[string]string{MemoryAvailable: "10%", NodeFSAvailable: "10%"},
+			wantMemPct: 0.10,
+			wantDisk:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := evictionThreshold(32, evictionTestNodeClass(tt.hard, tt.soft))
+
+			want := int64(tt.wantMemPct * float64(32*1024*1024*1024))
+			mem := got[v1.ResourceMemory]
+			assert.InDelta(t, want, mem.Value(), float64(want)*0.001)
+
+			_, ok := got[v1.ResourceEphemeralStorage]
+			assert.Equal(t, tt.wantDisk, ok, "ephemeral-storage threshold presence")
+		})
+	}
+}
+
+func evictionTestNodeClass(hard, soft map[string]string) *ociv1beta1.OCINodeClass {
+	return &ociv1beta1.OCINodeClass{
+		Spec: ociv1beta1.OCINodeClassSpec{
+			VolumeConfig: &ociv1beta1.VolumeConfig{
+				BootVolumeConfig: &ociv1beta1.BootVolumeConfig{
+					VolumeAttribute: ociv1beta1.VolumeAttribute{SizeInGBs: lo.ToPtr(int64(100))},
+				},
+			},
+			KubeletConfig: &ociv1beta1.KubeletConfiguration{EvictionHard: hard, EvictionSoft: soft},
+		},
 	}
 }

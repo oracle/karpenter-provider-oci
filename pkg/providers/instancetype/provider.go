@@ -527,7 +527,11 @@ func evictionThreshold(gbs float32, class *ociv1beta1.OCINodeClass) v1.ResourceL
 		return nil
 	}
 
-	memory := resource.NewQuantity(int64(gbs*1024*1024), resource.BinarySI)
+	// resource.NewQuantity takes bytes, and gbs is in GiB, so the conversion is 1024^3.
+	// This previously scaled by 1024^2, making every percentage-based memory threshold 1024x
+	// too small and causing Karpenter to over-estimate allocatable memory by nearly the whole
+	// threshold.
+	memory := resource.NewQuantity(int64(float64(gbs)*1024*1024*1024), resource.BinarySI)
 
 	diskSizeAvailable := false
 	var storage *resource.Quantity
@@ -536,20 +540,24 @@ func evictionThreshold(gbs float32, class *ociv1beta1.OCINodeClass) v1.ResourceL
 		storage = resource.NewScaledQuantity(*class.Spec.VolumeConfig.BootVolumeConfig.SizeInGBs, resource.Giga)
 	}
 
+	// Each block reads its own map. Previously both read EvictionHard for memory and
+	// EvictionSoft for nodefs, so EvictionSoft[memory.available] and
+	// EvictionHard[nodefs.available] were never consulted, and a soft-only KubeletConfig
+	// produced no threshold at all.
 	hard := v1.ResourceList{}
 	if class.Spec.KubeletConfig.EvictionHard != nil {
 		if v, ok := class.Spec.KubeletConfig.EvictionHard[MemoryAvailable]; ok {
 			hard[v1.ResourceMemory] = parseEvictionSignal(memory, v)
 		}
 
-		if v, ok := class.Spec.KubeletConfig.EvictionSoft[NodeFSAvailable]; diskSizeAvailable && ok {
+		if v, ok := class.Spec.KubeletConfig.EvictionHard[NodeFSAvailable]; diskSizeAvailable && ok {
 			hard[v1.ResourceEphemeralStorage] = parseEvictionSignal(storage, v)
 		}
 	}
 
 	soft := v1.ResourceList{}
-	if class.Spec.KubeletConfig.EvictionHard != nil {
-		if v, ok := class.Spec.KubeletConfig.EvictionHard[MemoryAvailable]; ok {
+	if class.Spec.KubeletConfig.EvictionSoft != nil {
+		if v, ok := class.Spec.KubeletConfig.EvictionSoft[MemoryAvailable]; ok {
 			soft[v1.ResourceMemory] = parseEvictionSignal(memory, v)
 		}
 
