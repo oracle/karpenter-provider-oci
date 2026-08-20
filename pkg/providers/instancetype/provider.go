@@ -85,6 +85,7 @@ type DefaultProvider struct {
 	k8sVersion                    *semver.Version
 	ipFamilies                    []network.IpFamily
 	unavailableOfferings          *cache.UnavailableOfferings
+	discoveredCapacity            *cache.DiscoveredCapacity
 
 	lock sync.RWMutex
 }
@@ -104,6 +105,7 @@ func New(ctx context.Context,
 	globalShapeConfigs []ociv1beta1.ShapeConfig,
 	ipFamilies []network.IpFamily,
 	unavailableOfferings *cache.UnavailableOfferings,
+	discoveredCapacity *cache.DiscoveredCapacity,
 	startAsync <-chan struct{}) (*DefaultProvider, error) {
 	p := &DefaultProvider{
 		region:                        region,
@@ -120,6 +122,7 @@ func New(ctx context.Context,
 		ipFamilies:                    ipFamilies,
 		kubernetesInterface:           kubernetesInterface,
 		unavailableOfferings:          unavailableOfferings,
+		discoveredCapacity:            discoveredCapacity,
 	}
 
 	p.GlobalShapeConfigs = lo.Map(globalShapeConfigs, func(item ociv1beta1.ShapeConfig, _ int) *ociv1beta1.ShapeConfig {
@@ -314,6 +317,11 @@ func (p *DefaultProvider) decorateInstanceType(ctx context.Context, it *OciInsta
 	// Set capacity & overhead
 	setCapacity(it, shape, ocpu, memoryInGbs, nodeClass, p.ipFamilies)
 	setOverhead(it, shape, ocpu, memoryInGbs, nodeClass)
+
+	// Prefer memory actually measured on a node of this kind over the modelled figure.
+	// Applied after setCapacity rather than inside it so that the estimate stays a single,
+	// self-contained calculation and discovery is visibly an override of it.
+	p.applyDiscoveredCapacity(it, nodeClass)
 
 	basePrice, priceAvailable := p.calculatePrices(shape, ocpu, memoryInGbs, cpuBaseline)
 
