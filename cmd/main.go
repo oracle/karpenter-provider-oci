@@ -9,6 +9,7 @@ package main
 
 import (
 	"log"
+	"time"
 
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/cloudprovider"
@@ -90,6 +91,7 @@ func main() {
 			op.ClientSet,
 			op.EventRecorder,
 			op.ImageProvider,
+			imageReconcileRefreshInterval(ociOptions),
 			op.KmsKeyProvider,
 			op.NetworkProvider,
 			op.CapacityReservationProvider,
@@ -99,4 +101,14 @@ func main() {
 			cloudProvider,
 		)...).
 		Start(ctx)
+}
+
+// imageReconcileRefreshInterval returns the OCINodeClass requeue cadence for keeping image
+// candidates fresh. It matches the image-filter cache eviction interval when that toggle is on, so
+// each requeue lands after an eviction and forces a fresh ListImages via the ImageReconciler.
+func imageReconcileRefreshInterval(o *options.Options) time.Duration {
+	if !o.EnableImageFilterCacheRefresh {
+		return 0
+	}
+	return time.Duration(o.ImageFilterCacheRefreshIntervalMinutes) * time.Minute
 }

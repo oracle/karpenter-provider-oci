@@ -22,17 +22,21 @@ import (
 
 type ImageReconciler struct {
 	imageProvider image.Provider
+	// refreshInterval, when > 0, requeues the nodeclass at that interval on successful reconcile so
+	// the image list is re-resolved after the image-filter cache is evicted by the provider's
+	// periodic refresh.
+	refreshInterval time.Duration
 }
 
 func (i *ImageReconciler) Reconcile(ctx context.Context, nodeClass *v1beta1.OCINodeClass) (reconcile.Result, error) {
 	imageResolveResult, err := i.imageProvider.ResolveImages(ctx,
 		nodeClass.Spec.VolumeConfig.BootVolumeConfig.ImageConfig)
 
-	return updateImageReconcileResult(ctx, nodeClass, imageResolveResult, err)
+	return updateImageReconcileResult(ctx, nodeClass, imageResolveResult, err, i.refreshInterval)
 }
 
 func updateImageReconcileResult(ctx context.Context, class *v1beta1.OCINodeClass,
-	imageResolveResult *image.ImageResolveResult, err error) (reconcile.Result, error) {
+	imageResolveResult *image.ImageResolveResult, err error, refreshInterval time.Duration) (reconcile.Result, error) {
 	if err == nil {
 		log.FromContext(ctx).Info("image resolved")
 		class.Status.Volume.ImageCandidates = lo.Map(imageResolveResult.Images,
@@ -44,18 +48,18 @@ func updateImageReconcileResult(ctx context.Context, class *v1beta1.OCINodeClass
 			})
 
 		class.StatusConditions().SetTrue(v1beta1.ConditionTypeImageReady)
-	} else {
-		log.FromContext(ctx).Error(err, "failed to resolve image")
-		class.Status.Volume.ImageCandidates = nil
-		class.StatusConditions().SetFalse(v1beta1.ConditionTypeImageReady,
-			v1beta1.ConditionImageNotReadyReason, utils.PrettyString(err.Error(), 1024))
 
-		// TODO - classify error and decide whether to retry, we don't return error so as not to
-		// disturb other reconciliation.
-		return reconcile.Result{
-			RequeueAfter: 5 * time.Minute,
-		}, nil
+		return reconcile.Result{RequeueAfter: refreshInterval}, nil
 	}
 
-	return reconcile.Result{}, nil
+	log.FromContext(ctx).Error(err, "failed to resolve image")
+	class.Status.Volume.ImageCandidates = nil
+	class.StatusConditions().SetFalse(v1beta1.ConditionTypeImageReady,
+		v1beta1.ConditionImageNotReadyReason, utils.PrettyString(err.Error(), 1024))
+
+	// TODO - classify error and decide whether to retry, we don't return error so as not to
+	// disturb other reconciliation.
+	return reconcile.Result{
+		RequeueAfter: 5 * time.Minute,
+	}, nil
 }

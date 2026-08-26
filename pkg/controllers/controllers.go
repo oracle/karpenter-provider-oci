@@ -9,6 +9,7 @@ package controllers
 
 import (
 	"context"
+	"time"
 
 	"github.com/awslabs/operatorpkg/controller"
 	"github.com/oracle/karpenter-provider-oci/pkg/controllers/nodeclasses"
@@ -37,6 +38,7 @@ func NewControllers(
 	clientSet kubernetes.Interface,
 	recorder events.Recorder,
 	imageProvider image.Provider,
+	imageRefreshInterval time.Duration,
 	kmsKeyProvider kms.Provider,
 	networkProvider network.Provider,
 	capacityReservationProvider capacityreservation.Provider,
@@ -48,7 +50,7 @@ func NewControllers(
 	var controllers []controller.Controller
 
 	nodeClassController := lo.Must(nodeclasses.NewController(ctx, kubeClient, recorder, imageProvider,
-		kmsKeyProvider, networkProvider, capacityReservationProvider,
+		imageRefreshInterval, kmsKeyProvider, networkProvider, capacityReservationProvider,
 		computeClusterProvider, compartmentProvider, clusterPlacementGroupProvider))
 
 	orphanInstanceController := orphaninstance.NewController(ctx, kubeClient, clientSet, cloudProvider)

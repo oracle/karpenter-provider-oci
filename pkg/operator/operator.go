@@ -161,7 +161,9 @@ func createOperator(ctx context.Context, coreOp *operator.Operator,
 		unavailableOfferings, ociOptions.EnableUnavailableOfferingsOnServiceLimitExceeded))
 
 	imageProvider := lo.Must(image.NewProvider(ctx, clientSet, ociClient,
-		ociOptions.PreBakedImageCompartmentId, "", coreOp.Elected()))
+		ociOptions.PreBakedImageCompartmentId, "", coreOp.Elected(),
+		ociOptions.EnableImageFilterCacheRefresh,
+		time.Duration(ociOptions.ImageFilterCacheRefreshIntervalMinutes)*time.Minute))
 
 	kmsKeyProvider := lo.Must(kms.NewProvider(ctx, ociOptions.ClusterCompartmentId, configProvider, &rateLimiter))
 

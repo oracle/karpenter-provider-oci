@@ -29,7 +29,7 @@ var _ = Describe("Image Reconciler", func() {
 
 		fakeComputeClient := fakes.NewFakeComputeClient("testClusterCompartmentId")
 		imageProvider := lo.Must(image.NewProvider(ctx, nil, fakeComputeClient,
-			"testPreBakedCompartmentId", "", fakes.NewDummyChannel()))
+			"testPreBakedCompartmentId", "", fakes.NewDummyChannel(), false, 0))
 
 		imageController = &Controller{
 			Client:   k8sClient,
