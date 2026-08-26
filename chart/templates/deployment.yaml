@@ -99,7 +99,7 @@ spec:
             - name: HEALTH_PROBE_PORT
               value: "{{ .Values.controller.healthProbe.port }}"
             - name: OCI_SDK_APPEND_USER_AGENT
-              value: "karpenter-provider-oci"
+              value: 'karpenter-provider-oci/{{ .Chart.Version }}'
             - name: SYSTEM_NAMESPACE
               valueFrom:
                 fieldRef:
