@@ -168,11 +168,11 @@ func (p *DefaultProvider) listInstanceTypesForFlexShape(ctx context.Context, sha
 	if len(shapeConfigs) > 1 {
 		// On Kubernetes versions < 1.31, limit to a single ShapeConfig as flex shape support isn't there in CCM
 		if p.k8sVersion == nil {
-			log.FromContext(ctx).Info("multiple shapeConfigs only supported on Kubernetes v1.31+; using first entry",
+			log.FromContext(ctx).V(1).Info("multiple shapeConfigs only supported on Kubernetes v1.31+; using first entry",
 				"operation", "list_flex_shape")
 			shapeConfigs = shapeConfigs[:1]
 		} else if p.k8sVersion.Minor < minK8sMinorForMultiFlex {
-			log.FromContext(ctx).Info("multiple shapeConfigs only supported on Kubernetes v1.31+; using first entry",
+			log.FromContext(ctx).V(1).Info("multiple shapeConfigs only supported on Kubernetes v1.31+; using first entry",
 				"operation", "list_flex_shape",
 				"clusterVersion", p.k8sVersion.String())
 			shapeConfigs = shapeConfigs[:1]
@@ -182,7 +182,7 @@ func (p *DefaultProvider) listInstanceTypesForFlexShape(ctx context.Context, sha
 	for _, cfg := range shapeConfigs {
 		// Validation: need at least ocpus configured
 		if cfg.Ocpus == nil {
-			log.FromContext(ctx).Info("shapeConfig contains nil ocpus, ignoring",
+			log.FromContext(ctx).V(1).Info("shapeConfig contains nil ocpus, ignoring",
 				"operation", "list_flex_shape")
 			continue
 		}
@@ -191,7 +191,7 @@ func (p *DefaultProvider) listInstanceTypesForFlexShape(ctx context.Context, sha
 		var memory float32
 
 		if *cfg.Ocpus > *shape.OcpuOptions.Max || *cfg.Ocpus < *shape.OcpuOptions.Min {
-			log.FromContext(ctx).Info("shapeConfig ocpus are not within allowed shape range",
+			log.FromContext(ctx).V(1).Info("shapeConfig ocpus are not within allowed shape range",
 				"operation", "list_flex_shape",
 				"shape", *shape.Shape, "ocpus", *cfg.Ocpus)
 			continue
@@ -234,7 +234,7 @@ func (p *DefaultProvider) listInstanceTypesForFlexShape(ctx context.Context, sha
 
 		if cfg.MemoryInGbs != nil {
 			if *cfg.MemoryInGbs < *shape.MemoryOptions.MinInGBs || *cfg.MemoryInGbs > *shape.MemoryOptions.MaxInGBs {
-				log.FromContext(ctx).Info("shapeConfig memoryInGbs are not within allowed shape range",
+				log.FromContext(ctx).V(1).Info("shapeConfig memoryInGbs are not within allowed shape range",
 					"operation", "list_flex_shape",
 					"shape", *shape.Shape, "memoryInGbs", *cfg.MemoryInGbs)
 				continue
