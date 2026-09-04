@@ -373,6 +373,65 @@
       "memoryUnitPrice": 0.0027,
       "diskUnitPrice": 0,
       "monthlyPriceInUSD": 2035.58
+    },
+    {
+      "shapeName": "BM.DenseIO.E6.Ax.192",
+      "ocpuUnitPrice": 0.0108,
+      "memoryUnitPrice": 0.009,
+      "diskUnitPrice": 0.1433,
+      "monthlyPriceInUSD": 25670.14
+    },
+    {
+      "shapeName": "VM.Standard4.Ax.Flex",
+      "ocpuUnitPrice": 0.0119,
+      "memoryUnitPrice": 0.0114,
+      "diskUnitPrice": 0
+    },
+    {
+      "shapeName": "VM.DenseIO.E6.Ax.Flex",
+      "ocpuUnitPrice": 0.0108,
+      "memoryUnitPrice": 0.009,
+      "diskUnitPrice": 0.1433
+    },
+    {
+      "shapeName": "VM.Standard.E6.Ax.Flex",
+      "ocpuUnitPrice": 0.0138,
+      "memoryUnitPrice": 0.0108,
+      "diskUnitPrice": 0
+    },
+    {
+      "shapeName": "VM.Standard.A4.Ax.Flex",
+      "ocpuUnitPrice": 0.019,
+      "memoryUnitPrice": 0.0084,
+      "diskUnitPrice": 0
+    },
+    {
+      "shapeName": "BM.GPU.RTXPRO.8",
+      "ocpuUnitPrice": 4.5,
+      "memoryUnitPrice": 0,
+      "diskUnitPrice": 0,
+      "monthlyPriceInUSD": 26784
+    },
+    {
+      "shapeName": "BM.Standard.A4.Ax.48",
+      "ocpuUnitPrice": 0.019,
+      "memoryUnitPrice": 0.0084,
+      "diskUnitPrice": 0,
+      "monthlyPriceInUSD": 5478.22
+    },
+    {
+      "shapeName": "BM.Standard4.Ax.120",
+      "ocpuUnitPrice": 0.0119,
+      "memoryUnitPrice": 0.0114,
+      "diskUnitPrice": 0,
+      "monthlyPriceInUSD": 10833.24
+    },
+    {
+      "shapeName": "BM.Standard.E6.Ax.192",
+      "ocpuUnitPrice": 0.0138,
+      "memoryUnitPrice": 0.0108,
+      "diskUnitPrice": 0,
+      "monthlyPriceInUSD": 14313.37
     }
   ],
   "preemptibleShapes": [

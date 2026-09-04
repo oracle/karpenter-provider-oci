@@ -179,10 +179,14 @@ func (p *DefaultProvider) constructSecondaryVnicsNpnSpec(ctx context.Context,
 		"SecondaryVnics", secondaryVnicsSpec)
 
 	npnSpec := &npnv1beta1.NativePodNetworkSpec{
-		ID:             instanceId,
-		MaxPodCount:    maxPods,
+		ID:          instanceId,
+		MaxPodCount: maxPods,
+		IpFamilies: lo.Map(p.ipFamilies, func(item network.IpFamily, index int) string {
+			return string(item)
+		}),
 		SecondaryVnics: secondaryVnicsSpec,
 	}
+
 	return npnSpec, nil
 }
 

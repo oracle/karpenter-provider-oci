@@ -20,6 +20,8 @@ Only `settings.clusterCompartmentId`, `settings.vcnCompartmentId`, and `settings
 
 Set `settings.ociVcnIpNative` to `true` only when the OKE cluster uses OCI VCN-native pod networking.
 
+Configure `settings.ipFamilies` to match the IP family configuration of the OKE cluster. The default value is `IPv4` only. For dual-stack clusters, include `IPv6` in the list.
+
 The chart already provides a default OKE image compartment for `settings.preBakedImageCompartmentId`. You only need to set it if you want to override that default. Please refer to [Override the OKE image compartment used by `imageFilter`](advanced-use-cases.md#override-the-oke-image-compartment-used-by-imagefilter) for additional details.
 
 For all the chart values, see [Helm Chart Reference](../reference/helm-chart.md).
