@@ -171,11 +171,11 @@ func (p *DefaultProvider) listInstanceTypesForFlexShape(ctx context.Context, sha
 	if len(shapeConfigs) > 1 {
 		// On Kubernetes versions < 1.31, limit to a single ShapeConfig as flex shape support isn't there in CCM
 		if p.k8sVersion == nil {
-			log.FromContext(ctx).Info("multiple shapeConfigs only supported on Kubernetes v1.31+; using first entry",
+			log.FromContext(ctx).V(1).Info("multiple shapeConfigs only supported on Kubernetes v1.31+; using first entry",
 				"operation", "list_flex_shape")
 			shapeConfigs = shapeConfigs[:1]
 		} else if p.k8sVersion.Minor < minK8sMinorForMultiFlex {
-			log.FromContext(ctx).Info("multiple shapeConfigs only supported on Kubernetes v1.31+; using first entry",
+			log.FromContext(ctx).V(1).Info("multiple shapeConfigs only supported on Kubernetes v1.31+; using first entry",
 				"operation", "list_flex_shape",
 				"clusterVersion", p.k8sVersion.String())
 			shapeConfigs = shapeConfigs[:1]
@@ -185,7 +185,7 @@ func (p *DefaultProvider) listInstanceTypesForFlexShape(ctx context.Context, sha
 	for _, cfg := range shapeConfigs {
 		// Validation: need at least ocpus configured
 		if cfg.Ocpus == nil {
-			log.FromContext(ctx).Info("shapeConfig contains nil ocpus, ignoring",
+			log.FromContext(ctx).V(1).Info("shapeConfig contains nil ocpus, ignoring",
 				"operation", "list_flex_shape")
 			continue
 		}
@@ -194,7 +194,7 @@ func (p *DefaultProvider) listInstanceTypesForFlexShape(ctx context.Context, sha
 		var memory float32
 
 		if *cfg.Ocpus > *shape.OcpuOptions.Max || *cfg.Ocpus < *shape.OcpuOptions.Min {
-			log.FromContext(ctx).Info("shapeConfig ocpus are not within allowed shape range",
+			log.FromContext(ctx).V(1).Info("shapeConfig ocpus are not within allowed shape range",
 				"operation", "list_flex_shape",
 				"shape", *shape.Shape, "ocpus", *cfg.Ocpus)
 			continue
@@ -237,7 +237,7 @@ func (p *DefaultProvider) listInstanceTypesForFlexShape(ctx context.Context, sha
 
 		if cfg.MemoryInGbs != nil {
 			if *cfg.MemoryInGbs < *shape.MemoryOptions.MinInGBs || *cfg.MemoryInGbs > *shape.MemoryOptions.MaxInGBs {
-				log.FromContext(ctx).Info("shapeConfig memoryInGbs are not within allowed shape range",
+				log.FromContext(ctx).V(1).Info("shapeConfig memoryInGbs are not within allowed shape range",
 					"operation", "list_flex_shape",
 					"shape", *shape.Shape, "memoryInGbs", *cfg.MemoryInGbs)
 				continue
@@ -535,7 +535,11 @@ func evictionThreshold(gbs float32, class *ociv1beta1.OCINodeClass) v1.ResourceL
 		return nil
 	}
 
-	memory := resource.NewQuantity(int64(gbs*1024*1024), resource.BinarySI)
+	// resource.NewQuantity takes bytes, and gbs is in GiB, so the conversion is 1024^3.
+	// This previously scaled by 1024^2, making every percentage-based memory threshold 1024x
+	// too small and causing Karpenter to over-estimate allocatable memory by nearly the whole
+	// threshold.
+	memory := resource.NewQuantity(int64(float64(gbs)*1024*1024*1024), resource.BinarySI)
 
 	diskSizeAvailable := false
 	var storage *resource.Quantity
@@ -544,20 +548,24 @@ func evictionThreshold(gbs float32, class *ociv1beta1.OCINodeClass) v1.ResourceL
 		storage = resource.NewScaledQuantity(*class.Spec.VolumeConfig.BootVolumeConfig.SizeInGBs, resource.Giga)
 	}
 
+	// Each block reads its own map. Previously both read EvictionHard for memory and
+	// EvictionSoft for nodefs, so EvictionSoft[memory.available] and
+	// EvictionHard[nodefs.available] were never consulted, and a soft-only KubeletConfig
+	// produced no threshold at all.
 	hard := v1.ResourceList{}
 	if class.Spec.KubeletConfig.EvictionHard != nil {
 		if v, ok := class.Spec.KubeletConfig.EvictionHard[MemoryAvailable]; ok {
 			hard[v1.ResourceMemory] = parseEvictionSignal(memory, v)
 		}
 
-		if v, ok := class.Spec.KubeletConfig.EvictionSoft[NodeFSAvailable]; diskSizeAvailable && ok {
+		if v, ok := class.Spec.KubeletConfig.EvictionHard[NodeFSAvailable]; diskSizeAvailable && ok {
 			hard[v1.ResourceEphemeralStorage] = parseEvictionSignal(storage, v)
 		}
 	}
 
 	soft := v1.ResourceList{}
-	if class.Spec.KubeletConfig.EvictionHard != nil {
-		if v, ok := class.Spec.KubeletConfig.EvictionHard[MemoryAvailable]; ok {
+	if class.Spec.KubeletConfig.EvictionSoft != nil {
+		if v, ok := class.Spec.KubeletConfig.EvictionSoft[MemoryAvailable]; ok {
 			soft[v1.ResourceMemory] = parseEvictionSignal(memory, v)
 		}
 
@@ -660,9 +668,9 @@ func kubeReservedResources(shape *ocicore.Shape, ocpu float32,
 	}
 
 	res := v1.ResourceList{
-		// round-up cpu, and show memory as Mi
+		// round-up cpu; memoryRes is in GiB and resource.NewQuantity takes bytes, so scale by 1024^3
 		v1.ResourceCPU:    *resource.NewMilliQuantity(int64(math.Ceil(float64(cpuRes))), resource.DecimalSI),
-		v1.ResourceMemory: *resource.NewQuantity(int64(math.Ceil(float64(memoryRes*1024))), resource.BinarySI),
+		v1.ResourceMemory: *resource.NewQuantity(int64(math.Ceil(float64(memoryRes)*1024*1024*1024)), resource.BinarySI),
 	}
 
 	var override map[string]string

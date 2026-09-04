@@ -198,6 +198,10 @@ func TestCreateSecondaryVnicsNpnCustomObjectValidInput(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Should not return errors")
 		} else {
+			expectedIpFamilies := lo.Map(ipFamilyTc.ipFamilies, func(item network.IpFamily, index int) string {
+				return string(item)
+			})
+			assert.Equal(t, expectedIpFamilies, result.Spec.IpFamilies)
 			assert.Equal(t, int64(testMaxPods), result.Spec.MaxPodCount)
 
 			for index, resultSecondaryVnic := range result.Spec.SecondaryVnics {

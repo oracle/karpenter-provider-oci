@@ -7,7 +7,7 @@
 
 # --- Builder Stage ---
 ARG BUILDER_IMAGE=golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
-ARG BASE_IMAGE=oraclelinux:8-slim@sha256:3557a80ab147f6e3da8853a77563b14e705fd31d1b1a8674dfa1a40b875d37e7
+ARG BASE_IMAGE=oraclelinux:8-slim@sha256:2379235158e7715ddfe4f4a26eb1638edb12a6b52ad9ed852a84e38beeaa6642
 FROM --platform=$BUILDPLATFORM $BUILDER_IMAGE AS builder
 
 ARG TARGETOS=linux
