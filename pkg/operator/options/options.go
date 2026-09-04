@@ -44,6 +44,8 @@ type Options struct {
 	InstanceLaunchTimeOutFailOver                    bool
 	UnavailableOfferingsTTLSeconds                   int
 	EnableUnavailableOfferingsOnServiceLimitExceeded bool
+	EnableImageFilterCacheRefresh                    bool
+	ImageFilterCacheRefreshIntervalMinutes           int
 	DisableRateLimiter                               bool
 	RateLimitQPSRead                                 float64
 	RateLimitBurstRead                               int
@@ -127,6 +129,12 @@ Example in a JSON format:
 	fs.BoolVar(&o.EnableUnavailableOfferingsOnServiceLimitExceeded,
 		"enable-unavailable-offerings-on-service-limit-exceeded", false,
 		"Mark offerings unavailable when OCI service limits are exceeded")
+	fs.BoolVar(&o.EnableImageFilterCacheRefresh,
+		"enable-image-filter-cache-refresh", false,
+		"Periodically evict image-filter cache entries so newly published OKE images are picked up")
+	fs.IntVar(&o.ImageFilterCacheRefreshIntervalMinutes,
+		"image-filter-cache-refresh-interval-minutes", 30,
+		"Interval, in minutes, between image-filter cache refreshes when enabled")
 	fs.BoolVar(&o.DisableRateLimiter, "disable-rate-limiter", true,
 		"Disable the OCI client-side rate limiter")
 	fs.Float64Var(&o.RateLimitQPSRead, "rate-limit-qps-read", 0,
@@ -228,6 +236,9 @@ func (o *Options) Validate() error {
 	}
 	if o.UnavailableOfferingsTTLSeconds < 0 {
 		return errors.New("unavailable-offerings-ttl-seconds must be zero (to disable) or a positive integer")
+	}
+	if o.EnableImageFilterCacheRefresh && o.ImageFilterCacheRefreshIntervalMinutes <= 0 {
+		return errors.New("image-filter-cache-refresh-interval-minutes must be a positive integer")
 	}
 	if o.RateLimitQPSRead < 0 {
 		return errors.New("rate-limit-qps-read must be greater than or equal to 0")

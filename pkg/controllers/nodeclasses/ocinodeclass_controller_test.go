@@ -38,7 +38,7 @@ var _ = Describe("OCINodeClass Reconciler", func() {
 		ociTestNodeClass = fakes.CreateOciNodeClassWithMinimumReconcilableSetting(nodeClassClusterCompartmentId)
 
 		imageProvider := lo.Must(image.NewProvider(ctx, nil, fakes.NewFakeComputeClient(nodeClassClusterCompartmentId),
-			"testPreBakedCompartmentId", "", fakes.NewDummyChannel()))
+			"testPreBakedCompartmentId", "", fakes.NewDummyChannel(), false, 0))
 
 		kmsProvider := lo.Must(kms.NewProvider(ctx, nodeClassClusterCompartmentId, fakes.NewDummyConfigurationProvider()))
 		kmsProvider.SetKmsClient("https://testvalut-management.kms.us-ashburn-1.oraclecloud.com", fakes.NewFakeKmsClient())
@@ -57,6 +57,7 @@ var _ = Describe("OCINodeClass Reconciler", func() {
 		ociNodeClassController = lo.Must(NewController(ctx, k8sClient,
 			&fakes.FakeEventRecorder{},
 			imageProvider,
+			0,
 			kmsProvider,
 			networkProvider,
 			crProvider,

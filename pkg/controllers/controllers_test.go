@@ -42,7 +42,7 @@ var _ = Describe("OCINodeClass Reconciler", func() {
 		nodeClassClusterCompartmentId := "ocid1.compartment.oc1..cluster123"
 
 		imageProvider := lo.Must(image.NewProvider(ctx, nil, fakes.NewFakeComputeClient(nodeClassClusterCompartmentId),
-			"testPreBakedCompartmentId", "", fakes.NewDummyChannel()))
+			"testPreBakedCompartmentId", "", fakes.NewDummyChannel(), false, 0))
 
 		kmsProvider := lo.Must(kms.NewProvider(ctx, nodeClassClusterCompartmentId, fakes.NewDummyConfigurationProvider()))
 		kmsProvider.SetKmsClient("https://testvalut-management.kms.us-ashburn-1.oraclecloud.com", fakes.NewFakeKmsClient())
@@ -59,8 +59,8 @@ var _ = Describe("OCINodeClass Reconciler", func() {
 			nodeClassClusterCompartmentId), nodeClassClusterCompartmentId)
 
 		controllers := NewControllers(ctx, nil, nil, nil, fake.NewClientset(),
-			&fakes.FakeEventRecorder{}, imageProvider, kmsProvider, networkProvider, crProvider, computeClusterProvider,
-			identityProvider, cpgProvider, &fakes.FakeCloudProvider{},
+			&fakes.FakeEventRecorder{}, imageProvider, 0, kmsProvider, networkProvider, crProvider,
+			computeClusterProvider, identityProvider, cpgProvider, &fakes.FakeCloudProvider{},
 		)
 
 		Expect(controllers).To(HaveLen(2))

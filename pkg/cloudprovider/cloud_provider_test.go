@@ -83,7 +83,7 @@ var _ = Describe("CloudProvider Integration Tests", func() {
 
 		ociTestNodeClass = fakes.CreateOciNodeClassWithMinimumReconcilableSetting(nodeClassClusterCompartmentID)
 		imageProvider := lo.Must(image.NewProvider(ctx, nil, fakes.NewFakeComputeClient(nodeClassClusterCompartmentID),
-			"testPreBakedCompartmentId", "", fakes.NewDummyChannel()))
+			"testPreBakedCompartmentId", "", fakes.NewDummyChannel(), false, 0))
 		kmsProvider := lo.Must(kms.NewProvider(ctx, nodeClassClusterCompartmentID, fakes.NewDummyConfigurationProvider()))
 		kmsProvider.SetKmsClient("https://testvalut-management.kms.us-ashburn-1.oraclecloud.com", fakes.NewFakeKmsClient())
 		networkProvider := lo.Must(network.NewProvider(ctx, nodeClassClusterCompartmentID,
@@ -119,6 +119,7 @@ var _ = Describe("CloudProvider Integration Tests", func() {
 		ociNodeClassController = lo.Must(nodeclasses.NewController(ctx, k8sClient,
 			&fakes.FakeEventRecorder{},
 			imageProvider,
+			0,
 			kmsProvider,
 			networkProvider,
 			crProvider,

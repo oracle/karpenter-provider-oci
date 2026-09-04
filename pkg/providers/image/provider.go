@@ -414,7 +414,9 @@ func kubeletVersionCompatibleScore(clusterVersion, kletVersion *semver.Version) 
 
 func NewProvider(ctx context.Context, kubernetesInterface kubernetes.Interface,
 	computeClient oci.ComputeClient, preBakedImageCompartmentId,
-	cioHardenedImageCompartmentId string, startAsync <-chan struct{}) (*DefaultProvider, error) {
+	cioHardenedImageCompartmentId string, startAsync <-chan struct{},
+	imageFilterCacheRefreshEnabled bool,
+	imageFilterCacheRefreshInterval time.Duration) (*DefaultProvider, error) {
 	p := &DefaultProvider{
 		kubernetesInterface:           kubernetesInterface,
 		computeClient:                 computeClient,
@@ -428,6 +430,15 @@ func NewProvider(ctx context.Context, kubernetesInterface kubernetes.Interface,
 	go utils.RefreshAtInterval(ctx, true, startAsync, time.Hour, func(_ context.Context) error {
 		return p.refreshClusterVersion()
 	})()
+
+	if imageFilterCacheRefreshEnabled {
+		go utils.RefreshAtInterval(ctx, false, startAsync, imageFilterCacheRefreshInterval,
+			func(ctx2 context.Context) error {
+				p.imageFilterCache.EvictMatching(func(_ string) bool { return true })
+				log.FromContext(ctx2).V(1).Info("image filter cache evicted")
+				return nil
+			})()
+	}
 
 	return p, nil
 }
