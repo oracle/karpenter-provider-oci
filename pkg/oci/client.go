@@ -271,16 +271,14 @@ func LogWorkRequestDuration(ctx context.Context, operation string, wr ociwr.Work
 		"duration_ms", serverElapsedDuration.Milliseconds(),
 	}
 
-	wrIdStr := ""
 	if wr.Id != nil {
 		values = append(values, "workRequestId", *wr.Id)
-		wrIdStr = *wr.Id
 	}
 
 	logger.Info("work-request complete", values...)
 
 	metrics.RecordWorkRequestProcessTime(serverElapsedDuration.Seconds(),
-		operation, string(wr.Status), wrIdStr)
+		operation, string(wr.Status))
 }
 
 // --- Compute methods ---

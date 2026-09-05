@@ -27,7 +27,6 @@ const (
 	ApiStatusCodeLabel     = "status_code"
 	OperationLabel         = "operation"
 	StatusLabel            = "status"
-	WorkRequestIdLabel     = "work_request_id"
 )
 
 var (
@@ -102,7 +101,6 @@ var (
 		[]string{
 			OperationLabel,
 			StatusLabel,
-			WorkRequestIdLabel,
 		},
 	)
 )
@@ -137,11 +135,10 @@ func CountResponseStatus(apiName string, input interface{}) {
 }
 
 func RecordWorkRequestProcessTime(serverElapsedSeconds float64,
-	operation string, status string, workRequestId string) {
+	operation string, status string) {
 	WorkRequestProcessDuration.Observe(serverElapsedSeconds,
 		map[string]string{
-			OperationLabel:     operation,
-			StatusLabel:        status,
-			WorkRequestIdLabel: workRequestId,
+			OperationLabel: operation,
+			StatusLabel:    status,
 		})
 }

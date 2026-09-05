@@ -114,14 +114,13 @@ func TestCountResponseStatusNilHTTPResponse(t *testing.T) {
 
 func TestRecordWorkRequestProcessTime(t *testing.T) {
 	duration := 10 * time.Second
-	RecordWorkRequestProcessTime(duration.Seconds(), "testOperation", "SUCCEEDED", "testWrId")
+	RecordWorkRequestProcessTime(duration.Seconds(), "testOperation", "SUCCEEDED")
 
 	testMetric, ok := fakes.FindMetricWithLabelValues(t,
 		"work_request_process_time_seconds",
 		map[string]string{
-			OperationLabel:     "testOperation",
-			StatusLabel:        "SUCCEEDED",
-			WorkRequestIdLabel: "testWrId",
+			OperationLabel: "testOperation",
+			StatusLabel:    "SUCCEEDED",
 		})
 
 	assert.True(t, ok)
