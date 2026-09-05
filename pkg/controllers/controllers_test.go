@@ -11,6 +11,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/fakes"
 	"github.com/oracle/karpenter-provider-oci/pkg/operator/options"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacityreservation"
@@ -25,7 +26,9 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/fake"
+	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
 func TestControllers(t *testing.T) {
@@ -60,9 +63,18 @@ var _ = Describe("OCINodeClass Reconciler", func() {
 
 		controllers := NewControllers(ctx, nil, nil, nil, fake.NewClientset(),
 			&fakes.FakeEventRecorder{}, imageProvider, kmsProvider, networkProvider, crProvider, computeClusterProvider,
-			identityProvider, cpgProvider, &fakes.FakeCloudProvider{},
+			identityProvider, cpgProvider, &fakes.FakeCloudProvider{}, &fakeCapacityProvider{},
 		)
 
-		Expect(controllers).To(HaveLen(2))
+		Expect(controllers).To(HaveLen(3))
 	})
 })
+
+// fakeCapacityProvider stands in for the instance type provider's capacity discovery, which this
+// test does not exercise; it only needs NewControllers to wire something in.
+type fakeCapacityProvider struct{}
+
+func (f *fakeCapacityProvider) UpdateInstanceTypeCapacityFromNode(_ context.Context, _ *corev1.Node,
+	_ *karpv1.NodeClaim, _ *v1beta1.OCINodeClass) error {
+	return nil
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/awslabs/operatorpkg/controller"
 	"github.com/oracle/karpenter-provider-oci/pkg/controllers/nodeclasses"
 	"github.com/oracle/karpenter-provider-oci/pkg/controllers/orphaninstance"
+	"github.com/oracle/karpenter-provider-oci/pkg/controllers/providers/instancetype/capacity"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacityreservation"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/clusterplacementgroup"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/computecluster"
@@ -44,6 +45,7 @@ func NewControllers(
 	compartmentProvider identity.Provider,
 	clusterPlacementGroupProvider clusterplacementgroup.Provider,
 	cloudProvider cloudprovider.CloudProvider,
+	capacityProvider capacity.CapacityProvider,
 ) []controller.Controller {
 	var controllers []controller.Controller
 
@@ -52,7 +54,12 @@ func NewControllers(
 		computeClusterProvider, compartmentProvider, clusterPlacementGroupProvider))
 
 	orphanInstanceController := orphaninstance.NewController(ctx, kubeClient, clientSet, cloudProvider)
-	controllers = append(controllers, nodeClassController, orphanInstanceController)
+
+	// Feeds memory observed on registered nodes back into the instance type model, so a launch
+	// that turns out too small corrects the next one instead of repeating indefinitely.
+	capacityController := capacity.NewController(kubeClient, cloudProvider, capacityProvider)
+
+	controllers = append(controllers, nodeClassController, orphanInstanceController, capacityController)
 
 	return controllers
 }

@@ -53,7 +53,7 @@ type Operator struct {
 	*operator.Operator
 
 	InstanceProvider              instance.Provider
-	InstanceTypeProvider          instancetype.Provider
+	InstanceTypeProvider          *instancetype.DefaultProvider
 	PlacementProvider             placement.Provider
 	NetworkProvider               network.Provider
 	CapacityReservationProvider   capacityreservation.Provider
@@ -133,12 +133,17 @@ func createOperator(ctx context.Context, coreOp *operator.Operator,
 	unavailableOfferings := cache.NewUnavailableOfferings(
 		time.Duration(ociOptions.UnavailableOfferingsTTLSeconds) * time.Second)
 
+	// memory measured on registered nodes, reused for later launches of the same instance type
+	// and image so a too-optimistic estimate cannot drive an unbounded launch loop.
+	discoveredCapacity := cache.NewDiscoveredCapacity(cache.DiscoveredCapacityTTL)
+
 	instanceTypeProvider := lo.Must(instancetype.New(ctx, region, ociOptions.ClusterCompartmentId,
 		ociClient, identityProvider, clientSet, coreOp.GetAPIReader(),
 		capacityReservationProvider, computeClusterProvider, clusterPlacementGroupProvider,
 		shapeMetaFile, refreshInterval, ociOptions.GlobalShapeConfigs,
 		ociOptions.IpFamiliesFlag.IpFamilies,
 		unavailableOfferings,
+		discoveredCapacity,
 		coreOp.Elected()))
 
 	driftCaches := instance.NewDriftCaches()

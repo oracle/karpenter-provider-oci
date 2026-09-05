@@ -29,6 +29,14 @@ const (
 	UnavailableOfferingsTTL = 3 * time.Minute
 	// UnavailableOfferingsCleanupInterval triggers cleanup of the unavailable-offerings cache.
 	UnavailableOfferingsCleanupInterval = time.Minute
+
+	// DiscoveredCapacityTTL is how long a memory capacity measured on a real node is reused for
+	// later launches of the same instance type and image. It is long because the value is a
+	// property of the shape and image rather than of the moment: it only changes when OCI changes
+	// what a shape presents to the guest, and a stale entry is re-measured on the next launch.
+	DiscoveredCapacityTTL = 60 * 24 * time.Hour
+	// DiscoveredCapacityCleanupInterval triggers cleanup of the discovered-capacity cache.
+	DiscoveredCapacityCleanupInterval = time.Hour
 )
 
 type LoaderFunc[T any] func(ctx context.Context, key string) (T, error)
