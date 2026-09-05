@@ -69,9 +69,8 @@ func TestLogWorkRequestDurationMetrics(t *testing.T) {
 	testMetric, ok := fakes.FindMetricWithLabelValues(t,
 		"work_request_process_time_seconds",
 		map[string]string{
-			metrics.OperationLabel:     "testOperation",
-			metrics.StatusLabel:        string(wr.Status),
-			metrics.WorkRequestIdLabel: *wr.Id,
+			metrics.OperationLabel: "testOperation",
+			metrics.StatusLabel:    string(wr.Status),
 		})
 
 	assert.True(t, ok)
