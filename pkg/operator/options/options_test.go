@@ -10,17 +10,22 @@ package options
 import (
 	"context"
 	"flag"
+	"os"
 	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/instancetype"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/network"
 	"github.com/samber/lo"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/operator/options"
+	"sigs.k8s.io/yaml"
 )
 
 func TestOperatorOptions(t *testing.T) {
@@ -345,3 +350,43 @@ var _ = Describe("Test Operator Options", func() {
 		Expect(result).To(Equal(expected))
 	})
 })
+
+// The VM memory overhead defaults are proven safe against real measurements by
+// TestMemoryCapacity_NeverOverEstimates, but only for the constants in pkg/providers/instancetype.
+// These two tests stop the flag defaults and the Helm chart defaults from drifting away from those
+// constants, which would ship an unproven — possibly over-estimating — value.
+
+func TestVMMemoryOverheadDefaults_MatchProviderConstants(t *testing.T) {
+	opts := &Options{IpFamiliesFlag: new(network.IpFamilyValue)}
+	fs := &options.FlagSet{FlagSet: flag.NewFlagSet("test", flag.ContinueOnError)}
+	opts.AddFlags(fs)
+
+	assert.Equal(t, float64(instancetype.DefaultVMMemoryOverheadBaseMiB), opts.VMMemoryOverheadBaseMiB)
+	assert.Equal(t, float64(instancetype.DefaultVMMemoryOverheadPerGBMiB), opts.VMMemoryOverheadPerGBMiB)
+	assert.Equal(t, float64(instancetype.DefaultVMMemoryOverheadPercent), opts.VMMemoryOverheadPercent)
+}
+
+func TestVMMemoryOverheadDefaults_MatchHelmChart(t *testing.T) {
+	raw, err := os.ReadFile("../../../chart/values.yaml")
+	require.NoError(t, err)
+
+	var values struct {
+		Settings struct {
+			VMMemoryOverhead struct {
+				BaseMiB  *float64 `json:"baseMiB"`
+				PerGBMiB *float64 `json:"perGBMiB"`
+				Percent  *float64 `json:"percent"`
+			} `json:"vmMemoryOverhead"`
+		} `json:"settings"`
+	}
+	require.NoError(t, yaml.Unmarshal(raw, &values))
+
+	chart := values.Settings.VMMemoryOverhead
+	require.NotNil(t, chart.BaseMiB, "chart/values.yaml is missing settings.vmMemoryOverhead.baseMiB")
+	require.NotNil(t, chart.PerGBMiB, "chart/values.yaml is missing settings.vmMemoryOverhead.perGBMiB")
+	require.NotNil(t, chart.Percent, "chart/values.yaml is missing settings.vmMemoryOverhead.percent")
+
+	assert.Equal(t, float64(instancetype.DefaultVMMemoryOverheadBaseMiB), *chart.BaseMiB)
+	assert.Equal(t, float64(instancetype.DefaultVMMemoryOverheadPerGBMiB), *chart.PerGBMiB)
+	assert.Equal(t, float64(instancetype.DefaultVMMemoryOverheadPercent), *chart.Percent)
+}

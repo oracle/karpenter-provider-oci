@@ -10,6 +10,7 @@ package instancetype
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -335,6 +336,130 @@ func TestIsArmGpuBmDenseFlexAndArch(t *testing.T) {
 	assert.False(t, p.isComputeClusterSupportedShape("VM.Standard.E4.Flex"))
 }
 
+// defaultVMMemoryOverhead is built from the shipped constants rather than a copy of them, so the
+// safety property below is asserted against what actually ships. pkg/operator/options and the Helm
+// chart are pinned to the same constants by TestVMMemoryOverheadDefaults*.
+var defaultVMMemoryOverhead = VMMemoryOverheadConfig{
+	BaseMiB:  DefaultVMMemoryOverheadBaseMiB,
+	PerGBMiB: DefaultVMMemoryOverheadPerGBMiB,
+	Percent:  DefaultVMMemoryOverheadPercent,
+}
+
+// publishedMeasurements are every measurement of OCI's VM memory overhead published on
+// oracle/karpenter-provider-oci#7, across four CPU families and 8-128 GB. "actualMiB" is
+// node.status.capacity.memory as reported by the kubelet on a real node.
+//
+// The property that matters is that Karpenter's modelled capacity never exceeds the real
+// capacity. Exact agreement is neither achievable nor desirable: over-estimating makes Karpenter
+// launch a node the pending pod cannot fit on, and with no feedback loop it repeats that launch
+// indefinitely, while under-estimating merely wastes a little memory.
+var publishedMeasurements = []struct {
+	family      string
+	declaredMiB int64
+	actualMiB   int64
+}{
+	{"A1", 8192, 7657},
+	{"E4", 8192, 7646},
+	{"Std3", 8192, 7644},
+	{"A1", 12288, 11669},
+	{"E5", 16384, 15698},
+	{"E5", 28672, 27628},
+	{"E5", 32768, 31631},
+	{"A1", 51200, 49825},
+	{"E4", 51200, 49896},
+	{"Std3", 51200, 49894},
+	{"A1", 131072, 128292},
+	{"E4", 131072, 128286},
+	{"Std3", 131072, 128284},
+}
+
+// TestMemoryCapacity_NeverOverEstimates is the regression test for #7: the shipped defaults must
+// not over-estimate capacity against any published measurement.
+func TestMemoryCapacity_NeverOverEstimates(t *testing.T) {
+	for _, m := range publishedMeasurements {
+		t.Run(fmt.Sprintf("%s/%dMiB", m.family, m.declaredMiB), func(t *testing.T) {
+			gbs := float32(m.declaredMiB) / 1024
+			modelled := memoryCapacityMiB(gbs, defaultVMMemoryOverhead)
+
+			// Clearing every measured point is necessary but not sufficient. These are 13 points
+			// from a handful of images; a default that clears the closest of them by a hair is
+			// one unmeasured image build away from over-estimating again. Require real headroom
+			// so that a future retune cannot quietly reintroduce the bug this test exists to
+			// catch, while staying far enough below the shipped margin (71 MiB) not to be brittle.
+			const minMarginMiB = 64
+
+			margin := m.actualMiB - modelled
+			assert.GreaterOrEqual(t, margin, int64(minMarginMiB),
+				"modelled capacity %d MiB leaves only %d MiB of headroom against measured capacity "+
+					"%d MiB for a %g GiB %s shape; below %d MiB an unmeasured image build could push "+
+					"real capacity under the model, and Karpenter would launch nodes too small for "+
+					"the pods that triggered them",
+				modelled, margin, m.actualMiB, gbs, m.family, minMarginMiB)
+
+			// The other direction: a safe estimate is still meant to be useful, so it should stay
+			// within 1 GiB of the real figure rather than throwing memory away.
+			assert.Less(t, margin, int64(1024),
+				"modelled capacity %d MiB under-estimates measured capacity %d MiB by more than 1 GiB",
+				modelled, m.actualMiB)
+		})
+	}
+}
+
+func TestMemoryCapacity_Defaults(t *testing.T) {
+	tests := []struct {
+		name string
+		gbs  float32
+		want int64
+	}{
+		// declared MiB - (600 + 19*GiB)
+		{"8 GiB", 8, 8192 - 752},
+		{"16 GiB", 16, 16384 - 904},
+		{"32 GiB", 32, 32768 - 1208},
+		{"128 GiB", 128, 131072 - 3032},
+		// Fractional declarations round the overhead up, never down: 600 + 19*1.5 = 628.5.
+		{"1.5 GiB", 1.5, 1536 - 629},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, memoryCapacityMiB(tt.gbs, defaultVMMemoryOverhead))
+		})
+	}
+}
+
+func TestVMMemoryOverhead_PercentIsAFloor(t *testing.T) {
+	// The percentage form exists for operators used to karpenter-provider-aws. Combining it with
+	// max() means enabling it can only ever make the estimate more conservative, never less.
+	fixedOnly := VMMemoryOverheadConfig{BaseMiB: 600, PerGBMiB: 19}
+	withPercent := VMMemoryOverheadConfig{BaseMiB: 600, PerGBMiB: 19, Percent: 0.075}
+
+	for _, gbs := range []float64{1, 8, 16, 32, 64, 128, 512} {
+		assert.GreaterOrEqual(t, withPercent.OverheadMiB(gbs), fixedOnly.OverheadMiB(gbs),
+			"adding a percentage must never reduce the overhead (gbs=%g)", gbs)
+	}
+
+	// 7.5% dominates on small shapes only once the shape is large enough; at 128 GiB the flat
+	// percentage reserves far more than the fitted form, which is why it is not the default.
+	assert.Equal(t, int64(9831), withPercent.OverheadMiB(128)) // 0.075*128*1024 = 9830.4, rounded up
+	assert.Equal(t, int64(3032), fixedOnly.OverheadMiB(128))
+}
+
+func TestMemoryCapacity_ClampsToPositive(t *testing.T) {
+	// A shape too small to survive the overhead must still report positive capacity.
+	huge := VMMemoryOverheadConfig{BaseMiB: 100000, PerGBMiB: 0}
+
+	assert.Equal(t, int64(1), memoryCapacityMiB(1, huge))
+	assert.Equal(t, int64(1), memoryCapacityMiB(0, huge))
+}
+
+func TestMemoryCapacity_ZeroOverheadIsDeclaredMemory(t *testing.T) {
+	// Setting the overhead to zero must actually disable it, restoring pre-#7 behaviour.
+	none := VMMemoryOverheadConfig{}
+
+	assert.Equal(t, int64(32768), memoryCapacityMiB(32, none))
+	assert.Equal(t, int64(0), none.OverheadMiB(32))
+}
+
 func TestSetCapacity_GPUResources(t *testing.T) {
 	nc := &ociv1beta1.OCINodeClass{
 		Spec: ociv1beta1.OCINodeClassSpec{
@@ -391,7 +516,7 @@ func TestSetCapacity_GPUResources(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			it := &OciInstanceType{}
 
-			setCapacity(it, &tt.shape, 2, 8, nc, ipV4SingleStack)
+			setCapacity(it, &tt.shape, 2, 8, nc, ipV4SingleStack, defaultVMMemoryOverhead)
 
 			assert.Contains(t, it.Capacity, v1.ResourceCPU)
 			assert.Contains(t, it.Capacity, v1.ResourceMemory)
