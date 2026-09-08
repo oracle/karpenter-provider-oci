@@ -99,6 +99,12 @@
     "CPUReq": "1",
     "Replicas": 3
   },
+  "CapacityBufferTest": {
+    "Name": "busybox-capacity-buffer",
+    "InstanceType": "VM.Standard2.4",
+    "BufferReplicas": 3,
+    "WorkloadReplicas": 5
+  },
   "NodeOverlayTest": {
     "Name": "prefer-standard224",
     "CandidateShapes": [

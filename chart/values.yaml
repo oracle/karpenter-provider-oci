@@ -293,6 +293,9 @@ settings:
     # -- staticCapacity is ALPHA and is disabled by default.
     # Setting this to true will enable staticCapacity.
     staticCapacity: false
+    # -- capacityBuffer is ALPHA and is disabled by default.
+    # Setting this to true will enable proactive spare-capacity provisioning through CapacityBuffer resources.
+    capacityBuffer: false
 
 #  flexibleShapeConfigs: []
 #    - ocpus: 4

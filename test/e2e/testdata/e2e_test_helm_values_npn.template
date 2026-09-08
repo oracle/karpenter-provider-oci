@@ -14,6 +14,7 @@ settings:
   # -- Cluster's VCN compartment OCID
   vcnCompartmentId: "VAR_COMPARTMENT_ID"
   featureGates:
+    capacityBuffer: true
     nodeOverlay: true
     staticCapacity: true
   # -- set this to true for a cluster run with OciIpNativeCni
