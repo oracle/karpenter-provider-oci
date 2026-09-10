@@ -391,7 +391,7 @@ func TestSetCapacity_GPUResources(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			it := &OciInstanceType{}
 
-			setCapacity(it, &tt.shape, 2, 8, nc, ipV4SingleStack)
+			setCapacity(it, &tt.shape, 2, 8, nc, ipV4SingleStack, defaultVMMemoryOverhead)
 
 			assert.Contains(t, it.Capacity, v1.ResourceCPU)
 			assert.Contains(t, it.Capacity, v1.ResourceMemory)
@@ -2019,7 +2019,7 @@ func TestKubeReservedResources(t *testing.T) {
 			mem:   8,
 			nc:    &ociv1beta1.OCINodeClass{},
 			want: map[string]string{
-				"cpu":    "85m",
+				"cpu": "85m",
 				// 8 GiB shape -> 0.20*(8-4)+1 = 1.8 GiB reserved, in bytes (float32)
 				"memory": "1932735232",
 			},
@@ -2031,7 +2031,7 @@ func TestKubeReservedResources(t *testing.T) {
 			mem:   8,
 			nc:    &ociv1beta1.OCINodeClass{},
 			want: map[string]string{
-				"cpu":    "72m",
+				"cpu": "72m",
 				// 8 GiB shape -> 0.20*(8-4)+1 = 1.8 GiB reserved, in bytes (float32)
 				"memory": "1932735232",
 			},
@@ -2051,7 +2051,7 @@ func TestKubeReservedResources(t *testing.T) {
 				},
 			},
 			want: map[string]string{
-				"cpu":    "300m",
+				"cpu": "300m",
 				// 8 GiB shape -> 0.20*(8-4)+1 = 1.8 GiB reserved, in bytes (float32)
 				"memory": "1932735232",
 			},
@@ -2977,6 +2977,28 @@ func TestListInstanceTypes_NoDeadlockWithConcurrentWriter(t *testing.T) {
 	}
 }
 
+// setCapacity is where the distinction reaches the instance type, so assert it there too rather
+// than only on the helper.
+func TestSetCapacity_BareMetalVersusVM(t *testing.T) {
+	nc := &ociv1beta1.OCINodeClass{
+		Spec: ociv1beta1.OCINodeClassSpec{
+			VolumeConfig: &ociv1beta1.VolumeConfig{BootVolumeConfig: &ociv1beta1.BootVolumeConfig{}},
+		},
+	}
+
+	vm := &OciInstanceType{}
+	setCapacity(vm, vmShape, 4, 32, nc, ipV4SingleStack, defaultVMMemoryOverhead)
+
+	bm := &OciInstanceType{}
+	setCapacity(bm, bmShape, 4, 32, nc, ipV4SingleStack, defaultVMMemoryOverhead)
+
+	declared := resource.NewQuantity(32*1024*1024*1024, resource.BinarySI)
+	assert.Equal(t, declared.Value(), bm.Capacity.Memory().Value(),
+		"bare metal capacity must equal its declared memory")
+	assert.Less(t, vm.Capacity.Memory().Value(), declared.Value(),
+		"VM capacity must be reduced by the modelled hypervisor overhead")
+}
+
 func TestEvictionThreshold_PercentageUsesGiBBase(t *testing.T) {
 	// Regression for the 1024x unit error: resource.NewQuantity takes bytes, so a GiB figure
 	// must be scaled by 1024^3. Scaling by 1024^2 made every percentage-based threshold 1024x
@@ -3043,6 +3065,63 @@ func TestEvictionThreshold_ReadsSoftAndHardFromTheirOwnMaps(t *testing.T) {
 			assert.Equal(t, tt.wantDisk, ok, "ephemeral-storage threshold presence")
 		})
 	}
+}
+
+// The regression tests above call the helper directly, so they would still pass if the provider
+// stopped passing its configured overhead through. Drive the real call chain instead.
+func TestDecorateInstanceType_AppliesConfiguredOverhead(t *testing.T) {
+	nodeClass := &ociv1beta1.OCINodeClass{
+		Spec: ociv1beta1.OCINodeClassSpec{
+			VolumeConfig:  &ociv1beta1.VolumeConfig{BootVolumeConfig: &ociv1beta1.BootVolumeConfig{}},
+			NetworkConfig: &ociv1beta1.NetworkConfig{},
+		},
+	}
+	shapeAndAd := &ShapeAndAd{
+		Shape: &ocicore.Shape{
+			Shape: lo.ToPtr("VM.Standard.E4.Flex"), Ocpus: lo.ToPtr(float32(4)),
+			MemoryInGBs: lo.ToPtr(float32(32)), BillingType: ocicore.ShapeBillingTypePaid,
+		},
+		Ads: []string{"tenancy:PHX-AD-1"},
+	}
+	newProvider := func(overhead VMMemoryOverheadConfig) *DefaultProvider {
+		return &DefaultProvider{
+			shapeToPrice: map[string]*ShapePriceInfo{
+				"VM.STANDARD.E4.FLEX": {
+					ShapeName: lo.ToPtr("VM.Standard.E4.Flex"), OcpuUnitPrice: 0.05,
+					MemoryUnitPrice: 0.01, DiskUnitPrice: 0,
+				},
+			},
+			preemptibleShapes: PreemptibleShapes{"VM.STANDARD.E4": "VM.Standard.E4"},
+			vmMemoryOverhead:  overhead,
+		}
+	}
+	newInstanceType := func() *OciInstanceType {
+		return &OciInstanceType{
+			InstanceType: cloudprovider.InstanceType{Name: "VM.Standard.E4.Flex"},
+			Shape:        "VM.Standard.E4.Flex",
+			Ocpu:         lo.ToPtr(float32(4)),
+			MemoryInGbs:  lo.ToPtr(float32(32)),
+		}
+	}
+
+	declared := int64(32) * 1024 * 1024 * 1024
+
+	configured := newInstanceType()
+	_ = newProvider(defaultVMMemoryOverhead).decorateInstanceType(
+		context.Background(), configured, nodeClass, shapeAndAd, nil)
+
+	disabled := newInstanceType()
+	_ = newProvider(VMMemoryOverheadConfig{}).decorateInstanceType(
+		context.Background(), disabled, nodeClass, shapeAndAd, nil)
+
+	assert.Equal(t, declared, disabled.Capacity.Memory().Value(),
+		"a zero overhead must leave declared memory untouched")
+	assert.Less(t, configured.Capacity.Memory().Value(), declared,
+		"the provider's configured overhead must reach the modelled capacity")
+
+	wantMiB := memoryCapacityMiB(shapeAndAd.Shape, 32, defaultVMMemoryOverhead)
+	assert.Equal(t, wantMiB*1024*1024, configured.Capacity.Memory().Value(),
+		"the provider must apply exactly the configured overhead, not some other value")
 }
 
 func evictionTestNodeClass(hard, soft map[string]string) *ociv1beta1.OCINodeClass {

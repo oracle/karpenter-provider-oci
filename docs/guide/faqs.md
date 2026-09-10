@@ -300,3 +300,30 @@ If you want to run OCI GO SDK in debug mode (Karpenter uses OCI GO SDK to intera
 
 ### Suggestions regarding KubeletConfig maxPods and podsPerCore
 The value assigned to "podsPerCore" must not exceed the "maxPods" value. Additionally, for environments in which the customer is utilizing an OciVcnIpNative cluster, the "maxPods" value should be less than the aggregate sum of "IpCount" from the secondary VNICs.
+
+### How does KPO account for OCI VM memory overhead?
+OCI reserves memory below the guest, so a VM shape advertised as 32 GB presents roughly 30.9 GiB of `MemTotal` to Linux. Karpenter has to size a node *before* it exists, so it works from a model rather than a measurement. If that model used the advertised figure it would over-state what the node can hold, the pod that triggered the launch would not fit once the node registered, and — because nothing compares the model against the node it produced — the same launch would repeat.
+
+The provider therefore subtracts a memory overhead from each VM shape's modelled capacity:
+
+```
+overheadMiB = max(baseMiB + perGBMiB × declaredGiB, percent × declaredMiB)
+```
+
+Defaults are `600` MiB plus `19` MiB per GiB, which on a 32 GB shape reserves about 1.2 GiB. They are deliberately pessimistic: over-stating capacity causes repeated launches of nodes a pod can never fit on, while under-stating it only leaves a little memory unused.
+
+**Bare metal (`BM.*`) shapes are exempt** and keep their declared memory, since the overhead models a hypervisor and there is none beneath a BM instance.
+
+To tune it, set any of the following under `settings.vmMemoryOverhead` in the Helm values (or the equivalent `VM_MEMORY_OVERHEAD_BASE_MIB`, `VM_MEMORY_OVERHEAD_PER_GB_MIB`, `VM_MEMORY_OVERHEAD_PERCENT` environment variables):
+
+```yaml
+settings:
+  vmMemoryOverhead:
+    baseMiB: 600
+    perGBMiB: 19
+    percent: 0
+```
+
+`percent` is an alternative way of expressing the overhead, as a fraction of declared memory (`0.075` == 7.5%). It defaults to `0`, meaning unused. Because the two forms are combined with `max()`, setting it can only ever make the estimate more conservative, never less. Setting all three to `0` disables the adjustment entirely and restores the advertised figure.
+
+Tighten these only if you have measured `node.status.capacity.memory` on the shapes and images you actually run: a value that leaves Karpenter over-stating a node's memory brings back the repeated-launch behaviour described above.

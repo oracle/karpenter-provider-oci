@@ -91,6 +91,9 @@ A Helm chart for Karpenter provider OCI
 | settings.rateLimiter.qpsWrite | float | `0` | Write QPS for the OCI client-side rate limiter. 0 uses the built-in default. |
 | settings.unavailableOfferingsTTLSeconds | int | `180` | How long, in seconds, an offering observed to be out of host capacity is treated as unavailable before Karpenter retries it. Lower values retry exhausted offerings sooner; higher values reduce repeated launch attempts (and OCI throttling) against capacity that is unlikely to recover quickly. Set to 0 to disable the unavailable-offerings cache entirely, in which case offerings are never marked unavailable and Karpenter does not route around capacity-exhausted offerings. |
 | settings.vcnCompartmentId | string | `""` | [required] Cluster's VCN compartment OCID. |
+| settings.vmMemoryOverhead.baseMiB | int | `600` | Fixed part of the overhead, in MiB. |
+| settings.vmMemoryOverhead.perGBMiB | int | `19` | Part of the overhead that scales with declared memory, in MiB per GiB. |
+| settings.vmMemoryOverhead.percent | int | `0` | An alternative way of expressing the overhead, as a fraction of declared memory (0.075 == 7.5%). 0 means unused. The larger of the two forms is applied, so setting this can only make the estimate more conservative, never less. |
 | strategy | object | `{"rollingUpdate":{"maxUnavailable":1}}` | Strategy for updating the pod. |
 | terminationGracePeriodSeconds | string | `nil` | Override the default termination grace period for the pod. |
 | tolerations | list | `[{"key":"CriticalAddonsOnly","operator":"Exists"}]` | Tolerations to allow the pod to be scheduled to nodes with taints. |

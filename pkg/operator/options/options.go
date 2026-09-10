@@ -14,11 +14,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strings"
 
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/cache"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/instancetype"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/network"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
@@ -49,6 +51,9 @@ type Options struct {
 	RateLimitBurstRead                               int
 	RateLimitQPSWrite                                float64
 	RateLimitBurstWrite                              int
+	VMMemoryOverheadBaseMiB                          float64
+	VMMemoryOverheadPerGBMiB                         float64
+	VMMemoryOverheadPercent                          float64
 	setFlags                                         map[string]bool
 	parsed                                           bool
 }
@@ -137,6 +142,26 @@ Example in a JSON format:
 		"Write QPS for the OCI client-side rate limiter. 0 uses the default")
 	fs.IntVar(&o.RateLimitBurstWrite, "rate-limit-burst-write", 0,
 		"Write burst for the OCI client-side rate limiter. 0 uses the default")
+
+	// VM memory overhead: OCI reserves memory below the guest, so a VM shape declared as N GB
+	// presents less than N GiB of MemTotal to Linux. Bare metal has no hypervisor beneath it and
+	// is exempt. Karpenter must model this before the node
+	// exists, otherwise it launches nodes the pending pod cannot fit on and retries forever.
+	// The defaults are deliberately pessimistic: over-estimating capacity causes an unbounded
+	// launch loop, while under-estimating only wastes a little memory.
+	fs.Float64Var(&o.VMMemoryOverheadBaseMiB, "vm-memory-overhead-base-mib",
+		instancetype.DefaultVMMemoryOverheadBaseMiB,
+		"Fixed part, in MiB, of the memory overhead subtracted from every VM shape's modelled "+
+			"capacity. Bare metal shapes are exempt")
+	fs.Float64Var(&o.VMMemoryOverheadPerGBMiB, "vm-memory-overhead-per-gb-mib",
+		instancetype.DefaultVMMemoryOverheadPerGBMiB,
+		"Proportional part, in MiB per GiB of declared memory, of the memory overhead "+
+			"subtracted from every VM shape's modelled capacity. Bare metal shapes are exempt")
+	fs.Float64Var(&o.VMMemoryOverheadPercent, "vm-memory-overhead-percent",
+		instancetype.DefaultVMMemoryOverheadPercent,
+		"Memory overhead as a fraction of declared memory (0.075 equals 7.5%). Applied as "+
+			"max(base + perGB*GiB, percent*declared) so the larger, safer estimate always wins. "+
+			"0 disables the percentage form")
 
 	fs.Var((*RepairPoliciesValue)(&o.RepairPolicies),
 		"repair-policies",
@@ -242,7 +267,34 @@ func (o *Options) Validate() error {
 		return errors.New("rate-limit-burst-write must be greater than or equal to 0")
 	}
 
+	if !isFiniteInRange(o.VMMemoryOverheadBaseMiB, 0, math.MaxInt32) {
+		return errors.New("vm-memory-overhead-base-mib must be a finite number in [0, 2147483647]")
+	}
+	if !isFiniteInRange(o.VMMemoryOverheadPerGBMiB, 0, math.MaxInt32) {
+		return errors.New("vm-memory-overhead-per-gb-mib must be a finite number in [0, 2147483647]")
+	}
+	if !isFiniteInRange(o.VMMemoryOverheadPercent, 0, 1) || o.VMMemoryOverheadPercent == 1 {
+		return errors.New("vm-memory-overhead-percent must be a finite number in [0, 1)")
+	}
+
 	return nil
+}
+
+// VMMemoryOverhead assembles the instance type provider's overhead configuration from the parsed
+// flags. It exists so the mapping lives in one testable place: assembled inline at the call site,
+// transposing two same-typed fields would compile and silently model every node wrongly.
+func (o *Options) VMMemoryOverhead() instancetype.VMMemoryOverheadConfig {
+	return instancetype.VMMemoryOverheadConfig{
+		BaseMiB:  o.VMMemoryOverheadBaseMiB,
+		PerGBMiB: o.VMMemoryOverheadPerGBMiB,
+		Percent:  o.VMMemoryOverheadPercent,
+	}
+}
+
+// isFiniteInRange reports whether v is a real number within [lo, hi]. NaN compares false against
+// every bound, so it is rejected by construction rather than needing a separate check.
+func isFiniteInRange(v, lo, hi float64) bool {
+	return v >= lo && v <= hi
 }
 
 func (o *Options) ToContext(ctx context.Context) context.Context {

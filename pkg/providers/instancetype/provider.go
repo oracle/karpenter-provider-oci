@@ -85,6 +85,7 @@ type DefaultProvider struct {
 	k8sVersion                    *semver.Version
 	ipFamilies                    []network.IpFamily
 	unavailableOfferings          *cache.UnavailableOfferings
+	vmMemoryOverhead              VMMemoryOverheadConfig
 
 	lock sync.RWMutex
 }
@@ -104,6 +105,7 @@ func New(ctx context.Context,
 	globalShapeConfigs []ociv1beta1.ShapeConfig,
 	ipFamilies []network.IpFamily,
 	unavailableOfferings *cache.UnavailableOfferings,
+	vmMemoryOverhead VMMemoryOverheadConfig,
 	startAsync <-chan struct{}) (*DefaultProvider, error) {
 	p := &DefaultProvider{
 		region:                        region,
@@ -120,6 +122,7 @@ func New(ctx context.Context,
 		ipFamilies:                    ipFamilies,
 		kubernetesInterface:           kubernetesInterface,
 		unavailableOfferings:          unavailableOfferings,
+		vmMemoryOverhead:              vmMemoryOverhead,
 	}
 
 	p.GlobalShapeConfigs = lo.Map(globalShapeConfigs, func(item ociv1beta1.ShapeConfig, _ int) *ociv1beta1.ShapeConfig {
@@ -312,7 +315,7 @@ func (p *DefaultProvider) decorateInstanceType(ctx context.Context, it *OciInsta
 	}
 
 	// Set capacity & overhead
-	setCapacity(it, shape, ocpu, memoryInGbs, nodeClass, p.ipFamilies)
+	setCapacity(it, shape, ocpu, memoryInGbs, nodeClass, p.ipFamilies, p.vmMemoryOverhead)
 	setOverhead(it, shape, ocpu, memoryInGbs, nodeClass)
 
 	basePrice, priceAvailable := p.calculatePrices(shape, ocpu, memoryInGbs, cpuBaseline)
@@ -468,12 +471,13 @@ func makeRequirement(ad string, capType string) scheduling.Requirements {
 }
 
 func setCapacity(it *OciInstanceType, shape *ocicore.Shape, ocpu float32, gbs float32,
-	class *ociv1beta1.OCINodeClass, ipFamilies []network.IpFamily) {
+	class *ociv1beta1.OCINodeClass, ipFamilies []network.IpFamily,
+	vmMemoryOverhead VMMemoryOverheadConfig) {
 	vcpu := vcpu(shape, ocpu)
 
 	res := v1.ResourceList{
 		v1.ResourceCPU:    *resource.NewMilliQuantity(int64(vcpu*1000), resource.DecimalSI),
-		v1.ResourceMemory: *resource.NewQuantity(int64(gbs*1024*1024*1024), resource.BinarySI),
+		v1.ResourceMemory: *resource.NewQuantity(memoryCapacityMiB(shape, gbs, vmMemoryOverhead)*1024*1024, resource.BinarySI),
 		v1.ResourcePods:   *pods(int64(vcpu), class, ipFamilies),
 	}
 

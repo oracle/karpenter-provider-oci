@@ -172,6 +172,20 @@ spec:
             - name: ENABLE_UNAVAILABLE_OFFERINGS_ON_SERVICE_LIMIT_EXCEEDED
               value: "{{ .Values.settings.enableUnavailableOfferingsOnServiceLimitExceeded }}"
             {{- end }}
+            {{- with .Values.settings.vmMemoryOverhead }}
+            {{- if not (kindIs "invalid" .baseMiB) }}
+            - name: VM_MEMORY_OVERHEAD_BASE_MIB
+              value: "{{ .baseMiB }}"
+            {{- end }}
+            {{- if not (kindIs "invalid" .perGBMiB) }}
+            - name: VM_MEMORY_OVERHEAD_PER_GB_MIB
+              value: "{{ .perGBMiB }}"
+            {{- end }}
+            {{- if not (kindIs "invalid" .percent) }}
+            - name: VM_MEMORY_OVERHEAD_PERCENT
+              value: "{{ .percent }}"
+            {{- end }}
+            {{- end }}
             {{- with .Values.settings.flexibleShapeConfigs }}
             - name: FLEXIBLE_SHAPE_CONFIGS
               value: {{ . | toJson | quote }}

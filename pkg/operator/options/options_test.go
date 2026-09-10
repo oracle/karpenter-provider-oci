@@ -10,15 +10,23 @@ package options
 import (
 	"context"
 	"flag"
+	"math"
+	"os"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/instancetype"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/network"
 	"github.com/samber/lo"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/operator/options"
 )
@@ -345,3 +353,157 @@ var _ = Describe("Test Operator Options", func() {
 		Expect(result).To(Equal(expected))
 	})
 })
+
+// The VM memory overhead defaults are proven safe against real measurements by
+// TestMemoryCapacity_NeverOverEstimates, but only for the constants in pkg/providers/instancetype.
+// These two tests stop the flag defaults and the Helm chart defaults from drifting away from those
+// constants, which would ship an unproven — possibly over-estimating — value.
+
+func TestVMMemoryOverheadDefaults_MatchProviderConstants(t *testing.T) {
+	opts := &Options{IpFamiliesFlag: new(network.IpFamilyValue)}
+	fs := &options.FlagSet{FlagSet: flag.NewFlagSet("test", flag.ContinueOnError)}
+	opts.AddFlags(fs)
+
+	assert.Equal(t, float64(instancetype.DefaultVMMemoryOverheadBaseMiB), opts.VMMemoryOverheadBaseMiB)
+	assert.Equal(t, float64(instancetype.DefaultVMMemoryOverheadPerGBMiB), opts.VMMemoryOverheadPerGBMiB)
+	assert.Equal(t, float64(instancetype.DefaultVMMemoryOverheadPercent), opts.VMMemoryOverheadPercent)
+}
+
+func TestVMMemoryOverheadDefaults_MatchHelmChart(t *testing.T) {
+	raw, err := os.ReadFile("../../../chart/values.yaml")
+	require.NoError(t, err)
+
+	var values struct {
+		Settings struct {
+			VMMemoryOverhead struct {
+				BaseMiB  *float64 `json:"baseMiB"`
+				PerGBMiB *float64 `json:"perGBMiB"`
+				Percent  *float64 `json:"percent"`
+			} `json:"vmMemoryOverhead"`
+		} `json:"settings"`
+	}
+	require.NoError(t, yaml.Unmarshal(raw, &values))
+
+	chart := values.Settings.VMMemoryOverhead
+	require.NotNil(t, chart.BaseMiB, "chart/values.yaml is missing settings.vmMemoryOverhead.baseMiB")
+	require.NotNil(t, chart.PerGBMiB, "chart/values.yaml is missing settings.vmMemoryOverhead.perGBMiB")
+	require.NotNil(t, chart.Percent, "chart/values.yaml is missing settings.vmMemoryOverhead.percent")
+
+	assert.Equal(t, float64(instancetype.DefaultVMMemoryOverheadBaseMiB), *chart.BaseMiB)
+	assert.Equal(t, float64(instancetype.DefaultVMMemoryOverheadPerGBMiB), *chart.PerGBMiB)
+	assert.Equal(t, float64(instancetype.DefaultVMMemoryOverheadPercent), *chart.Percent)
+}
+
+// The overhead settings are the one place an operator can reintroduce the over-estimation this
+// change exists to prevent, so validation must reject values the arithmetic cannot handle.
+func TestValidateVMMemoryOverhead(t *testing.T) {
+	base := func() *Options {
+		return &Options{
+			ClusterCompartmentId:          "ocid1.compartment.oc1..a",
+			VcnCompartmentId:              "ocid1.compartment.oc1..b",
+			PreBakedImageCompartmentId:    "ocid1.compartment.oc1..c",
+			ApiserverEndpoint:             "10.0.0.1:6443",
+			ShapeMetaRefreshIntervalHours: 24,
+			InstanceLaunchTimeoutVMMins:   5,
+			InstanceLaunchTimeoutBMMins:   60,
+			VMMemoryOverheadBaseMiB:       instancetype.DefaultVMMemoryOverheadBaseMiB,
+			VMMemoryOverheadPerGBMiB:      instancetype.DefaultVMMemoryOverheadPerGBMiB,
+			VMMemoryOverheadPercent:       instancetype.DefaultVMMemoryOverheadPercent,
+		}
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*Options)
+		wantErr string
+	}{
+		{"shipped defaults are valid", func(*Options) {}, ""},
+		{"percent form is accepted", func(o *Options) { o.VMMemoryOverheadPercent = 0.075 }, ""},
+
+		{"negative base", func(o *Options) { o.VMMemoryOverheadBaseMiB = -1 }, "vm-memory-overhead-base-mib"},
+		{"negative per-gb", func(o *Options) { o.VMMemoryOverheadPerGBMiB = -1 }, "vm-memory-overhead-per-gb-mib"},
+		{"negative percent", func(o *Options) { o.VMMemoryOverheadPercent = -0.1 }, "vm-memory-overhead-percent"},
+
+		// NaN compares false against every bound, so a plain `< 0` check would let it through and
+		// the int64 conversion downstream would be implementation-defined.
+		{"NaN base", func(o *Options) { o.VMMemoryOverheadBaseMiB = math.NaN() }, "vm-memory-overhead-base-mib"},
+		{"NaN per-gb", func(o *Options) { o.VMMemoryOverheadPerGBMiB = math.NaN() }, "vm-memory-overhead-per-gb-mib"},
+		{"NaN percent", func(o *Options) { o.VMMemoryOverheadPercent = math.NaN() }, "vm-memory-overhead-percent"},
+
+		{"infinite base", func(o *Options) { o.VMMemoryOverheadBaseMiB = math.Inf(1) }, "vm-memory-overhead-base-mib"},
+		{"infinite per-gb", func(o *Options) { o.VMMemoryOverheadPerGBMiB = math.Inf(1) }, "vm-memory-overhead-per-gb-mib"},
+
+		// 100% would model every node as having no memory at all.
+		{"percent of one", func(o *Options) { o.VMMemoryOverheadPercent = 1 }, "vm-memory-overhead-percent"},
+		{"percent above one", func(o *Options) { o.VMMemoryOverheadPercent = 2 }, "vm-memory-overhead-percent"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o := base()
+			tt.mutate(o)
+
+			err := o.Validate()
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+// Guards the mapping from flags to the provider's config. Transposing two same-typed fields here
+// would compile and silently model every node's memory wrongly.
+func TestOptions_VMMemoryOverhead(t *testing.T) {
+	o := &Options{
+		VMMemoryOverheadBaseMiB:  601,
+		VMMemoryOverheadPerGBMiB: 17,
+		VMMemoryOverheadPercent:  0.075,
+	}
+
+	// Distinct values, so a transposition cannot pass.
+	assert.Equal(t, instancetype.VMMemoryOverheadConfig{
+		BaseMiB:  601,
+		PerGBMiB: 17,
+		Percent:  0.075,
+	}, o.VMMemoryOverhead())
+}
+
+// The chart reaches the provider through environment variables whose names KPO derives from the
+// flag names. A typo on either side is silent: the flag keeps its built-in default and the chart
+// value is ignored. Assert the deployment template carries exactly the names the flags imply.
+func TestVMMemoryOverheadEnvVarsMatchFlagNames(t *testing.T) {
+	opts := &Options{IpFamiliesFlag: new(network.IpFamilyValue)}
+	fs := &options.FlagSet{FlagSet: flag.NewFlagSet("test", flag.ContinueOnError)}
+	opts.AddFlags(fs)
+
+	raw, err := os.ReadFile("../../../chart/templates/deployment.yaml")
+	require.NoError(t, err)
+	deployment := string(raw)
+
+	for _, flagName := range []string{
+		"vm-memory-overhead-base-mib",
+		"vm-memory-overhead-per-gb-mib",
+		"vm-memory-overhead-percent",
+	} {
+		require.NotNil(t, fs.Lookup(flagName), "flag %s must exist", flagName)
+
+		// Parse() derives the env name from the flag name this way.
+		envName := strings.ReplaceAll(strings.ToUpper(flagName), "-", "_")
+		// Match the whole line: a bare substring check would also accept a suffixed typo such as
+		// VM_MEMORY_OVERHEAD_BASE_MIB_TYPO, which is exactly the mistake this guards against.
+		assert.Regexp(t, regexp.MustCompile(`(?m)^\s*- name: `+regexp.QuoteMeta(envName)+`\s*$`), deployment,
+			"chart/templates/deployment.yaml must set %s exactly, or the chart value is silently ignored", envName)
+	}
+
+	// Go templates treat 0 as falsy, so guarding a numeric field with `with` would silently drop
+	// an explicitly configured zero and fall back to the built-in default - a live bug in the AWS
+	// and Azure charts. Guarding the enclosing map with `with` is fine; a non-empty map is truthy.
+	for _, field := range []string{".baseMiB", ".perGBMiB", ".percent"} {
+		assert.Contains(t, deployment, `if not (kindIs "invalid" `+field+")",
+			"%s must be guarded by kindIs \"invalid\" so an explicit 0 is not discarded", field)
+		assert.NotContains(t, deployment, "with "+field+" }}",
+			"%s must not be guarded by `with`: Go templates treat 0 as falsy", field)
+	}
+}
