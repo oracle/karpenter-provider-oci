@@ -467,5 +467,9 @@
     "BM.HPC2.36",
     "BM.Optimized3.36",
     "BM.GPU.GB200.4"
+  ],
+  "oneVcpuPerOcpuShapes": [
+    "VM.Standard.A1.Flex",
+    "BM.Standard.A1.160"
   ]
 }

@@ -78,6 +78,7 @@ type DefaultProvider struct {
 	shapeToPrice                  map[string]*ShapePriceInfo
 	preemptibleShapes             PreemptibleShapes
 	computeClusterShapes          []string
+	oneVcpuPerOcpuShapes          map[string]struct{}
 	shapeMetaFile                 string
 	client                        client.Reader
 	GlobalShapeConfigs            []*ociv1beta1.ShapeConfig
@@ -117,6 +118,7 @@ func New(ctx context.Context,
 		clusterPlacementGroupProvider: clusterPlacementGroupProvider,
 		shapeToPrice:                  make(map[string]*ShapePriceInfo),
 		preemptibleShapes:             make(PreemptibleShapes),
+		oneVcpuPerOcpuShapes:          make(map[string]struct{}),
 		shapeMetaFile:                 shapeMetaFile,
 		client:                        directClient,
 		ipFamilies:                    ipFamilies,
@@ -314,9 +316,10 @@ func (p *DefaultProvider) decorateInstanceType(ctx context.Context, it *OciInsta
 		cpuBaseline = ociv1beta1.BASELINE_1_1
 	}
 
-	// Set capacity & overhead
-	setCapacity(it, shape, ocpu, memoryInGbs, nodeClass, p.ipFamilies, p.vmMemoryOverhead)
-	setOverhead(it, shape, ocpu, memoryInGbs, nodeClass)
+	// Set capacity & overhead using the same total vCPU count that the launched instance exposes.
+	totalVcpu := p.vcpu(shape, ocpu)
+	setCapacity(it, shape, totalVcpu, memoryInGbs, nodeClass, p.ipFamilies, p.vmMemoryOverhead)
+	setOverhead(it, totalVcpu, memoryInGbs, nodeClass)
 
 	basePrice, priceAvailable := p.calculatePrices(shape, ocpu, memoryInGbs, cpuBaseline)
 
@@ -470,15 +473,14 @@ func makeRequirement(ad string, capType string) scheduling.Requirements {
 	return requirements
 }
 
-func setCapacity(it *OciInstanceType, shape *ocicore.Shape, ocpu float32, gbs float32,
+func setCapacity(it *OciInstanceType, shape *ocicore.Shape, totalVcpu float32, gbs float32,
 	class *ociv1beta1.OCINodeClass, ipFamilies []network.IpFamily,
 	vmMemoryOverhead VMMemoryOverheadConfig) {
-	vcpu := vcpu(shape, ocpu)
-
 	res := v1.ResourceList{
-		v1.ResourceCPU:    *resource.NewMilliQuantity(int64(vcpu*1000), resource.DecimalSI),
-		v1.ResourceMemory: *resource.NewQuantity(memoryCapacityMiB(shape, gbs, vmMemoryOverhead)*1024*1024, resource.BinarySI),
-		v1.ResourcePods:   *pods(int64(vcpu), class, ipFamilies),
+		v1.ResourceCPU: *resource.NewMilliQuantity(int64(totalVcpu*1000), resource.DecimalSI),
+		v1.ResourceMemory: *resource.NewQuantity(
+			memoryCapacityMiB(shape, gbs, vmMemoryOverhead)*1024*1024, resource.BinarySI),
+		v1.ResourcePods: *pods(int64(totalVcpu), class, ipFamilies),
 	}
 
 	// TODO: what if not defined boot volume size, how much should we report?
@@ -509,17 +511,16 @@ func gpuCount(shape *ocicore.Shape) int {
 	return *shape.Gpus
 }
 
-func vcpu(shape *ocicore.Shape, ocpu float32) float32 {
-	vcpuRatio := float32(2.0)
-	if IsArmShape(*shape) {
-		vcpuRatio = float32(1.0)
+func (p *DefaultProvider) vcpu(shape *ocicore.Shape, ocpu float32) float32 {
+	if _, ok := p.oneVcpuPerOcpuShapes[strings.ToUpper(*shape.Shape)]; ok {
+		return ocpu
 	}
-	return vcpuRatio * ocpu
+	return 2 * ocpu
 }
 
-func setOverhead(it *OciInstanceType, shape *ocicore.Shape, ocpu float32, gbs float32, class *ociv1beta1.OCINodeClass) {
+func setOverhead(it *OciInstanceType, totalVcpu float32, gbs float32, class *ociv1beta1.OCINodeClass) {
 	it.InstanceType.Overhead = &cloudprovider.InstanceTypeOverhead{
-		KubeReserved:      kubeReservedResources(shape, vcpu(shape, ocpu), gbs, class),
+		KubeReserved:      kubeReservedResources(totalVcpu, gbs, class),
 		SystemReserved:    systemReservedResources(class),
 		EvictionThreshold: evictionThreshold(gbs, class),
 	}
@@ -621,8 +622,7 @@ func systemReservedResources(class *ociv1beta1.OCINodeClass) v1.ResourceList {
 }
 
 // nolint:lll
-func kubeReservedResources(shape *ocicore.Shape, ocpu float32,
-	gbs float32, class *ociv1beta1.OCINodeClass) v1.ResourceList {
+func kubeReservedResources(totalVcpu float32, gbs float32, class *ociv1beta1.OCINodeClass) v1.ResourceList {
 	var cpuRes float32
 	var memoryRes float32
 
@@ -630,12 +630,7 @@ func kubeReservedResources(shape *ocicore.Shape, ocpu float32,
 		follow the same logic here - https://bitbucket.oci.oraclecorp.com/projects/OKN/repos/node-ansible-bundle/browse/v4/getcpuMemory.py#18,49
 		customer can override using kubelet configuration in node class spec
 	*/
-	vcpuRatio := float32(2.0)
-	if IsArmShape(*shape) {
-		vcpuRatio = float32(1.0)
-	}
-	totalCpu := ocpu * vcpuRatio
-	switch totalCpu {
+	switch totalVcpu {
 	case 1:
 		cpuRes = 60
 	case 2:
@@ -647,7 +642,7 @@ func kubeReservedResources(shape *ocicore.Shape, ocpu float32,
 	case 5:
 		cpuRes = 90
 	default:
-		cpuRes = 90 + (totalCpu-5)*2.5
+		cpuRes = 90 + (totalVcpu-5)*2.5
 	}
 
 	switch {
@@ -735,12 +730,16 @@ func (p *DefaultProvider) reloadConfigFile(ctx context.Context) error {
 	p.computeClusterShapes = lo.Map(config.ComputeClusterShapes, func(s string, _ int) string {
 		return strings.ToUpper(s)
 	})
+	p.oneVcpuPerOcpuShapes = lo.SliceToMap(config.OneVcpuPerOcpuShapes, func(s string) (string, struct{}) {
+		return strings.ToUpper(s), struct{}{}
+	})
 
 	lg.Info("reload price config done",
 		"operation", "reload_shape_meta", "outcome", "success",
 		"price_entries", len(p.shapeToPrice),
 		"preemptible_shapes", len(p.preemptibleShapes),
 		"compute_cluster_shapes", len(p.computeClusterShapes),
+		"one_vcpu_per_ocpu_shapes", len(p.oneVcpuPerOcpuShapes),
 		"duration_ms", time.Since(start).Milliseconds())
 	return nil
 }
