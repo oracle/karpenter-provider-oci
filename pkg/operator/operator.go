@@ -53,7 +53,8 @@ type Operator struct {
 	*operator.Operator
 
 	InstanceProvider              instance.Provider
-	InstanceTypeProvider          *instancetype.DefaultProvider
+	InstanceTypeProvider          instancetype.Provider
+	CapacityDiscoveryProvider     instancetype.CapacityDiscoveryProvider
 	PlacementProvider             placement.Provider
 	NetworkProvider               network.Provider
 	CapacityReservationProvider   capacityreservation.Provider
@@ -182,6 +183,7 @@ func createOperator(ctx context.Context, coreOp *operator.Operator,
 		InstanceProvider:              instanceProvider,
 		PlacementProvider:             placementProvider,
 		InstanceTypeProvider:          instanceTypeProvider,
+		CapacityDiscoveryProvider:     instanceTypeProvider,
 		ImageProvider:                 imageProvider,
 		NetworkProvider:               networkProvider,
 		KmsKeyProvider:                kmsKeyProvider,

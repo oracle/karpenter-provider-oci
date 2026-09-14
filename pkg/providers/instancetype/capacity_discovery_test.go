@@ -442,3 +442,23 @@ func TestDiscoveryEnabled(t *testing.T) {
 		})
 	}
 }
+
+// The operator exposes listing and discovery as two narrow interfaces rather than the concrete
+// provider, so a consumer that only lists instance types is not coupled to capacity discovery.
+// Both are satisfied by the same value; these assertions fail at compile time if that stops being
+// true, which is what keeps the operator from having to name *DefaultProvider again.
+var (
+	_ Provider                  = (*DefaultProvider)(nil)
+	_ CapacityDiscoveryProvider = (*DefaultProvider)(nil)
+)
+
+func TestDefaultProviderSatisfiesBothInterfaces(t *testing.T) {
+	p := discoveryProvider()
+
+	// Listing knows nothing about discovery, and discovery knows nothing about listing.
+	var listing Provider = p
+	var discovery CapacityDiscoveryProvider = p
+
+	assert.NotNil(t, listing)
+	assert.True(t, discovery.DiscoveryEnabled())
+}

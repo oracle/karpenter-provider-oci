@@ -34,20 +34,6 @@ import (
 // publishing its memory capacity.
 const capacityNotReportedRequeue = 15 * time.Second
 
-// CapacityProvider records the memory a registered node actually reported.
-//
-// Declared here rather than reused from the instancetype package so this controller depends only
-// on the one operation it performs.
-type CapacityProvider interface {
-	UpdateInstanceTypeCapacityFromNode(ctx context.Context, node *v1.Node,
-		nodeClaim *corev1.NodeClaim) error
-
-	// DiscoveryEnabled reports whether measurements are used at all. When they are not, this
-	// controller has nothing to contribute and is not registered, so a disabled feature costs no
-	// watch, no reconciles and no API reads.
-	DiscoveryEnabled() bool
-}
-
 // Controller feeds the memory capacity of registered nodes back into the instance type model.
 //
 // Karpenter has to size a node before it exists, so it works from an estimate. Nothing otherwise
@@ -58,11 +44,11 @@ type CapacityProvider interface {
 type Controller struct {
 	kubeClient       client.Client
 	cloudProvider    cloudprovider.CloudProvider
-	capacityProvider CapacityProvider
+	capacityProvider instancetype.CapacityDiscoveryProvider
 }
 
 func NewController(kubeClient client.Client, cloudProvider cloudprovider.CloudProvider,
-	capacityProvider CapacityProvider) *Controller {
+	capacityProvider instancetype.CapacityDiscoveryProvider) *Controller {
 	return &Controller{
 		kubeClient:       kubeClient,
 		cloudProvider:    cloudProvider,

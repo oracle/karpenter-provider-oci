@@ -19,6 +19,7 @@ import (
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/computecluster"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/identity"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/image"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/instancetype"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/kms"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/network"
 	"github.com/samber/lo"
@@ -45,7 +46,7 @@ func NewControllers(
 	compartmentProvider identity.Provider,
 	clusterPlacementGroupProvider clusterplacementgroup.Provider,
 	cloudProvider cloudprovider.CloudProvider,
-	capacityProvider capacitydiscovery.CapacityProvider,
+	capacityProvider instancetype.CapacityDiscoveryProvider,
 ) []controller.Controller {
 	var controllers []controller.Controller
 

@@ -64,6 +64,19 @@ type Provider interface {
 		nodeClass *ociv1beta1.OCINodeClass, taints []v1.Taint) ([]*OciInstanceType, error)
 }
 
+// CapacityDiscoveryProvider is the part of the instance type provider that learns real node
+// capacity. It is separate from Provider so that consumers which only list instance types are not
+// coupled to capacity discovery, and so neither has to name the concrete implementation.
+type CapacityDiscoveryProvider interface {
+	// UpdateInstanceTypeCapacityFromNode records the memory a registered node actually reported.
+	UpdateInstanceTypeCapacityFromNode(ctx context.Context, node *v1.Node,
+		nodeClaim *corev1.NodeClaim) error
+
+	// DiscoveryEnabled reports whether measurements are used at all. The controller that feeds
+	// this provider is not registered when they are not.
+	DiscoveryEnabled() bool
+}
+
 // refresh every day - compute shapes doesn't change often.
 var refreshInterval = time.Hour * 24
 
