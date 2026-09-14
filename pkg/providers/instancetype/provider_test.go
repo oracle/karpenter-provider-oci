@@ -229,6 +229,24 @@ func TestReloadConfigFile_Success(t *testing.T) {
 	assert.Greater(t, len(p.shapeToPrice), 0)
 	assert.Greater(t, len(p.preemptibleShapes), 0)
 	assert.Greater(t, len(p.computeClusterShapes), 0)
+	assert.Contains(t, p.oneVcpuPerOcpuShapes, "VM.STANDARD.A1.FLEX")
+}
+
+func TestReloadConfigFile_UpdatesOneVcpuPerOcpuShapes(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "shape-meta*.json")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+	require.NoError(t, tmpFile.Close())
+
+	p := &DefaultProvider{shapeMetaFile: tmpFile.Name()}
+	shape := &ocicore.Shape{Shape: lo.ToPtr("VM.Standard.A1.Flex")}
+	require.NoError(t, os.WriteFile(tmpFile.Name(), []byte(`{"oneVcpuPerOcpuShapes":["vm.standard.a1.flex"]}`), 0o600))
+	require.NoError(t, p.reloadConfigFile(context.Background()))
+	assert.Equal(t, float32(3), p.vcpu(shape, 3), "matching is case-insensitive")
+
+	require.NoError(t, os.WriteFile(tmpFile.Name(), []byte(`{"oneVcpuPerOcpuShapes":[]}`), 0o600))
+	require.NoError(t, p.reloadConfigFile(context.Background()))
+	assert.Equal(t, float32(6), p.vcpu(shape, 3), "an empty list restores the default ratio")
 }
 
 // burstable.go tests
@@ -391,7 +409,7 @@ func TestSetCapacity_GPUResources(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			it := &OciInstanceType{}
 
-			setCapacity(it, &tt.shape, 2, 8, nc, ipV4SingleStack)
+			setCapacity(it, &tt.shape, 2, 8, nc, ipV4SingleStack, defaultVMMemoryOverhead)
 
 			assert.Contains(t, it.Capacity, v1.ResourceCPU)
 			assert.Contains(t, it.Capacity, v1.ResourceMemory)
@@ -577,14 +595,49 @@ func TestMustParsePercentageAndParseEvictionSignal(t *testing.T) {
 	assert.Equal(t, int64(128), got.Value())
 }
 
-func TestVcpuRatioArmVsAmd(t *testing.T) {
-	// AMD-like shape
-	amd := &ocicore.Shape{Shape: lo.ToPtr("VM.Standard.E4.Flex")}
-	// arm shape
-	arm := &ocicore.Shape{Shape: lo.ToPtr("VM.Standard.A1.Flex")}
+func TestVcpuRatioFromShapeMetadata(t *testing.T) {
+	p := &DefaultProvider{oneVcpuPerOcpuShapes: map[string]struct{}{
+		"VM.STANDARD.A1.FLEX": {},
+		"BM.STANDARD.A1.160":  {},
+	}}
 
-	assert.Equal(t, float32(4), vcpu(amd, float32(2))) // 2 OCPU -> 4 vCPU on AMD
-	assert.Equal(t, float32(2), vcpu(arm, float32(2))) // 2 OCPU -> 2 vCPU on ARM
+	tests := []struct {
+		shape string
+		want  float32
+	}{
+		{shape: "VM.Standard.A1.Flex", want: 2},
+		{shape: "bm.standard.a1.160", want: 2},
+		{shape: "VM.Standard.A2.Flex", want: 4},
+		{shape: "VM.Standard.A4.Flex", want: 4},
+		{shape: "VM.Standard.A4.Ax.Flex", want: 4},
+		{shape: "VM.Standard.E4.Flex", want: 4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.shape, func(t *testing.T) {
+			shape := &ocicore.Shape{Shape: lo.ToPtr(tt.shape)}
+			assert.Equal(t, tt.want, p.vcpu(shape, 2))
+		})
+	}
+}
+
+func TestA2CapacityAndKubeReservedUseTotalVcpus(t *testing.T) {
+	p := &DefaultProvider{}
+	shape := &ocicore.Shape{Shape: lo.ToPtr("VM.Standard.A2.Flex")}
+	class := &ociv1beta1.OCINodeClass{
+		Spec: ociv1beta1.OCINodeClassSpec{
+			VolumeConfig: &ociv1beta1.VolumeConfig{BootVolumeConfig: &ociv1beta1.BootVolumeConfig{}},
+		},
+	}
+	totalVcpu := p.vcpu(shape, 3)
+	assert.Equal(t, float32(6), totalVcpu)
+
+	it := &OciInstanceType{}
+	setCapacity(it, shape, totalVcpu, 40, class, ipV4SingleStack, defaultVMMemoryOverhead)
+	setOverhead(it, totalVcpu, 40, class)
+
+	assert.Equal(t, int64(6), it.Capacity.Cpu().Value())
+	assert.True(t, resource.MustParse("93m").Equal(*it.Overhead.KubeReserved.Cpu()))
 }
 
 func TestListInstanceTypesForFlexShapeAndTruncate(t *testing.T) {
@@ -834,17 +887,12 @@ func TestSystemReservedResources_Overrides(t *testing.T) {
 }
 
 func TestKubeReservedResources_AMDvsARM_AndOverrides(t *testing.T) {
-	// AMD-like shape
-	amd := &ocicore.Shape{Shape: lo.ToPtr("VM.Standard.E4.Flex")}
-	// ARM-like shape
-	arm := &ocicore.Shape{Shape: lo.ToPtr("VM.Standard.A1.Flex")}
-
 	// Base calculation without overrides should produce non-zero cpu/memory
-	rAMD := kubeReservedResources(amd, 2, 8, &ociv1beta1.OCINodeClass{})
+	rAMD := kubeReservedResources(4, 8, &ociv1beta1.OCINodeClass{})
 	assert.NotZero(t, rAMD.Cpu().MilliValue())
 	assert.NotZero(t, rAMD.Memory().Value())
 
-	rARM := kubeReservedResources(arm, 2, 8, &ociv1beta1.OCINodeClass{})
+	rARM := kubeReservedResources(2, 8, &ociv1beta1.OCINodeClass{})
 	assert.NotZero(t, rARM.Cpu().MilliValue())
 	assert.NotZero(t, rARM.Memory().Value())
 
@@ -859,7 +907,7 @@ func TestKubeReservedResources_AMDvsARM_AndOverrides(t *testing.T) {
 			},
 		},
 	}
-	ro := kubeReservedResources(amd, 2, 8, nc)
+	ro := kubeReservedResources(4, 8, nc)
 	assert.Equal(t, resource.MustParse("300m"), ro[v1.ResourceCPU])
 	assert.Equal(t, resource.MustParse("512Mi"), ro[v1.ResourceMemory])
 }
@@ -2005,19 +2053,17 @@ func TestIsPreemptibleShape(t *testing.T) {
 
 func TestKubeReservedResources(t *testing.T) {
 	tests := []struct {
-		name  string
-		shape *ocicore.Shape
-		vcpu  float32
-		mem   float32
-		nc    *ociv1beta1.OCINodeClass
-		want  map[string]string // expected resource values as strings
+		name string
+		vcpu float32
+		mem  float32
+		nc   *ociv1beta1.OCINodeClass
+		want map[string]string // expected resource values as strings
 	}{
 		{
-			name:  "AMD defaults",
-			shape: &ocicore.Shape{Shape: lo.ToPtr("VM.Standard.E4.Flex")},
-			vcpu:  2,
-			mem:   8,
-			nc:    &ociv1beta1.OCINodeClass{},
+			name: "AMD defaults",
+			vcpu: 4,
+			mem:  8,
+			nc:   &ociv1beta1.OCINodeClass{},
 			want: map[string]string{
 				"cpu": "85m",
 				// 8 GiB shape -> 0.20*(8-4)+1 = 1.8 GiB reserved, in bytes (float32)
@@ -2025,11 +2071,10 @@ func TestKubeReservedResources(t *testing.T) {
 			},
 		},
 		{
-			name:  "ARM defaults",
-			shape: &ocicore.Shape{Shape: lo.ToPtr("VM.Standard.A1.Flex")},
-			vcpu:  2,
-			mem:   8,
-			nc:    &ociv1beta1.OCINodeClass{},
+			name: "ARM defaults",
+			vcpu: 2,
+			mem:  8,
+			nc:   &ociv1beta1.OCINodeClass{},
 			want: map[string]string{
 				"cpu": "72m",
 				// 8 GiB shape -> 0.20*(8-4)+1 = 1.8 GiB reserved, in bytes (float32)
@@ -2037,10 +2082,9 @@ func TestKubeReservedResources(t *testing.T) {
 			},
 		},
 		{
-			name:  "cpu override only",
-			shape: &ocicore.Shape{Shape: lo.ToPtr("VM.Standard.E4.Flex")},
-			vcpu:  2,
-			mem:   8,
+			name: "cpu override only",
+			vcpu: 4,
+			mem:  8,
 			nc: &ociv1beta1.OCINodeClass{
 				Spec: ociv1beta1.OCINodeClassSpec{
 					KubeletConfig: &ociv1beta1.KubeletConfiguration{
@@ -2057,10 +2101,9 @@ func TestKubeReservedResources(t *testing.T) {
 			},
 		},
 		{
-			name:  "memory override only",
-			shape: &ocicore.Shape{Shape: lo.ToPtr("VM.Standard.E4.Flex")},
-			vcpu:  2,
-			mem:   8,
+			name: "memory override only",
+			vcpu: 4,
+			mem:  8,
 			nc: &ociv1beta1.OCINodeClass{
 				Spec: ociv1beta1.OCINodeClassSpec{
 					KubeletConfig: &ociv1beta1.KubeletConfiguration{
@@ -2076,10 +2119,9 @@ func TestKubeReservedResources(t *testing.T) {
 			},
 		},
 		{
-			name:  "both overrides",
-			shape: &ocicore.Shape{Shape: lo.ToPtr("VM.Standard.E4.Flex")},
-			vcpu:  2,
-			mem:   8,
+			name: "both overrides",
+			vcpu: 4,
+			mem:  8,
 			nc: &ociv1beta1.OCINodeClass{
 				Spec: ociv1beta1.OCINodeClassSpec{
 					KubeletConfig: &ociv1beta1.KubeletConfiguration{
@@ -2100,7 +2142,7 @@ func TestKubeReservedResources(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := kubeReservedResources(tt.shape, tt.vcpu, tt.mem, tt.nc)
+			got := kubeReservedResources(tt.vcpu, tt.mem, tt.nc)
 			for key, wantStr := range tt.want {
 				want := resource.MustParse(wantStr)
 				assert.True(t, want.Equal(got[v1.ResourceName(key)]), "key: %s", key)
@@ -2117,8 +2159,6 @@ func TestKubeReservedResources(t *testing.T) {
 // Insufficient memory. Assert the magnitude, which pins the units.
 func TestKubeReservedResources_MemoryIsScaledToBytes(t *testing.T) {
 	t.Parallel()
-	shape := &ocicore.Shape{Shape: lo.ToPtr("VM.Standard.E5.Flex")}
-
 	tests := []struct {
 		gbs      float32
 		wantGiB  float64
@@ -2131,7 +2171,7 @@ func TestKubeReservedResources_MemoryIsScaledToBytes(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := kubeReservedResources(shape, 2, tt.gbs, &ociv1beta1.OCINodeClass{})
+		got := kubeReservedResources(2, tt.gbs, &ociv1beta1.OCINodeClass{})
 		gib := float64(got.Memory().Value()) / (1024 * 1024 * 1024)
 		assert.InDelta(t, tt.wantGiB, gib, 0.01,
 			"gbs=%v reserved %d bytes, want ~%v GiB", tt.gbs, got.Memory().Value(), tt.wantGiB)
@@ -2977,6 +3017,28 @@ func TestListInstanceTypes_NoDeadlockWithConcurrentWriter(t *testing.T) {
 	}
 }
 
+// setCapacity is where the distinction reaches the instance type, so assert it there too rather
+// than only on the helper.
+func TestSetCapacity_BareMetalVersusVM(t *testing.T) {
+	nc := &ociv1beta1.OCINodeClass{
+		Spec: ociv1beta1.OCINodeClassSpec{
+			VolumeConfig: &ociv1beta1.VolumeConfig{BootVolumeConfig: &ociv1beta1.BootVolumeConfig{}},
+		},
+	}
+
+	vm := &OciInstanceType{}
+	setCapacity(vm, vmShape, 4, 32, nc, ipV4SingleStack, defaultVMMemoryOverhead)
+
+	bm := &OciInstanceType{}
+	setCapacity(bm, bmShape, 4, 32, nc, ipV4SingleStack, defaultVMMemoryOverhead)
+
+	declared := resource.NewQuantity(32*1024*1024*1024, resource.BinarySI)
+	assert.Equal(t, declared.Value(), bm.Capacity.Memory().Value(),
+		"bare metal capacity must equal its declared memory")
+	assert.Less(t, vm.Capacity.Memory().Value(), declared.Value(),
+		"VM capacity must be reduced by the modelled hypervisor overhead")
+}
+
 func TestEvictionThreshold_PercentageUsesGiBBase(t *testing.T) {
 	// Regression for the 1024x unit error: resource.NewQuantity takes bytes, so a GiB figure
 	// must be scaled by 1024^3. Scaling by 1024^2 made every percentage-based threshold 1024x
@@ -3043,6 +3105,63 @@ func TestEvictionThreshold_ReadsSoftAndHardFromTheirOwnMaps(t *testing.T) {
 			assert.Equal(t, tt.wantDisk, ok, "ephemeral-storage threshold presence")
 		})
 	}
+}
+
+// The regression tests above call the helper directly, so they would still pass if the provider
+// stopped passing its configured overhead through. Drive the real call chain instead.
+func TestDecorateInstanceType_AppliesConfiguredOverhead(t *testing.T) {
+	nodeClass := &ociv1beta1.OCINodeClass{
+		Spec: ociv1beta1.OCINodeClassSpec{
+			VolumeConfig:  &ociv1beta1.VolumeConfig{BootVolumeConfig: &ociv1beta1.BootVolumeConfig{}},
+			NetworkConfig: &ociv1beta1.NetworkConfig{},
+		},
+	}
+	shapeAndAd := &ShapeAndAd{
+		Shape: &ocicore.Shape{
+			Shape: lo.ToPtr("VM.Standard.E4.Flex"), Ocpus: lo.ToPtr(float32(4)),
+			MemoryInGBs: lo.ToPtr(float32(32)), BillingType: ocicore.ShapeBillingTypePaid,
+		},
+		Ads: []string{"tenancy:PHX-AD-1"},
+	}
+	newProvider := func(overhead VMMemoryOverheadConfig) *DefaultProvider {
+		return &DefaultProvider{
+			shapeToPrice: map[string]*ShapePriceInfo{
+				"VM.STANDARD.E4.FLEX": {
+					ShapeName: lo.ToPtr("VM.Standard.E4.Flex"), OcpuUnitPrice: 0.05,
+					MemoryUnitPrice: 0.01, DiskUnitPrice: 0,
+				},
+			},
+			preemptibleShapes: PreemptibleShapes{"VM.STANDARD.E4": "VM.Standard.E4"},
+			vmMemoryOverhead:  overhead,
+		}
+	}
+	newInstanceType := func() *OciInstanceType {
+		return &OciInstanceType{
+			InstanceType: cloudprovider.InstanceType{Name: "VM.Standard.E4.Flex"},
+			Shape:        "VM.Standard.E4.Flex",
+			Ocpu:         lo.ToPtr(float32(4)),
+			MemoryInGbs:  lo.ToPtr(float32(32)),
+		}
+	}
+
+	declared := int64(32) * 1024 * 1024 * 1024
+
+	configured := newInstanceType()
+	_ = newProvider(defaultVMMemoryOverhead).decorateInstanceType(
+		context.Background(), configured, nodeClass, shapeAndAd, nil, "")
+
+	disabled := newInstanceType()
+	_ = newProvider(VMMemoryOverheadConfig{}).decorateInstanceType(
+		context.Background(), disabled, nodeClass, shapeAndAd, nil, "")
+
+	assert.Equal(t, declared, disabled.Capacity.Memory().Value(),
+		"a zero overhead must leave declared memory untouched")
+	assert.Less(t, configured.Capacity.Memory().Value(), declared,
+		"the provider's configured overhead must reach the modelled capacity")
+
+	wantMiB := memoryCapacityMiB(shapeAndAd.Shape, 32, defaultVMMemoryOverhead)
+	assert.Equal(t, wantMiB*1024*1024, configured.Capacity.Memory().Value(),
+		"the provider must apply exactly the configured overhead, not some other value")
 }
 
 func evictionTestNodeClass(hard, soft map[string]string) *ociv1beta1.OCINodeClass {

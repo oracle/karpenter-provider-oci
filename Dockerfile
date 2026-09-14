@@ -12,11 +12,16 @@ FROM --platform=$BUILDPLATFORM $BUILDER_IMAGE AS builder
 
 ARG TARGETOS=linux
 ARG TARGETARCH
+ARG GOPROXY
 
 WORKDIR /workspace
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download
+    if [ -n "$GOPROXY" ]; then \
+      GOPROXY="$GOPROXY" go mod download; \
+    else \
+      go mod download; \
+    fi
 
 COPY cmd/ ./cmd/
 COPY pkg/ ./pkg/
