@@ -328,7 +328,9 @@ Defaults are `600` MiB plus `19` MiB per GiB, which on a 32 GB shape reserves ab
 - **The cache is in memory**, so measurements are relearned after a controller restart or leader change. Nodes still running are re-read at startup, so in practice it repopulates from the live fleet.
 - **Entries expire**, after 60 days by default and sooner if `discoveredCapacityTTLHours` is lowered. Observing the same or a smaller value refreshes the entry, so a combination in active use does not expire; a larger observation is ignored and does not refresh it. Expiry matters because smallest-wins means a value can never recover upward on its own, and because a host change can alter what a shape presents without anything else invalidating the entry.
 
-**Configuration.** The estimate used before anything is measured:
+**Configuration.** The two are configured independently, and either can be switched off on its own.
+
+The estimate used before anything is measured:
 
 ```yaml
 settings:
@@ -338,15 +340,32 @@ settings:
     percent: 0
 ```
 
-How long a measurement is reused, and how to switch discovery off:
+`percent` is an alternative way of expressing the overhead, as a fraction of declared memory (`0.075` == 7.5%). It defaults to `0`, meaning unused. Because the two forms are combined with `max()`, setting it can only ever make the estimate more conservative, never less.
+
+Setting all three to `0` disables the estimate, so a VM shape is modelled at its declared memory until a measurement exists for it:
 
 ```yaml
 settings:
-  discoveredCapacityTTLHours: 1440   # the default; 0 disables discovery
+  vmMemoryOverhead:
+    baseMiB: 0
+    perGBMiB: 0
+    percent: 0
 ```
 
-`percent` is an alternative way of expressing the overhead, as a fraction of declared memory (`0.075` == 7.5%). It defaults to `0`, meaning unused. Because the two forms are combined with `max()`, setting it can only ever make the estimate more conservative, never less.
+How long a measurement is reused:
 
-Setting `discoveredCapacityTTLHours: 0` turns off discovery: the controller that watches registering nodes is not started, no image is resolved while scheduling, and every launch is modelled from the estimate. The estimate still applies — to report declared memory unchanged you would also set all three `vmMemoryOverhead` values to `0`.
+```yaml
+settings:
+  discoveredCapacityTTLHours: 1440   # the default
+```
 
-Tighten either only if you have measured `node.status.capacity.memory` on the shapes and images you actually run: a value that leaves Karpenter over-stating a node's memory brings back the repeated-launch behaviour described above.
+Setting it to `0` disables discovery: the controller that watches registering nodes is not started, no image is resolved while scheduling, and every launch is modelled from the estimate.
+
+```yaml
+settings:
+  discoveredCapacityTTLHours: 0
+```
+
+Note these are independent. Disabling discovery still leaves the estimate in place; only disabling both makes Karpenter report a VM shape's declared memory as-is, which is the behaviour that caused the repeated launches described above.
+
+Tighten either only if you have measured `node.status.capacity.memory` on the shapes and images you actually run: a value that leaves Karpenter over-stating a node's memory brings back that behaviour.
