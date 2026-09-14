@@ -11,7 +11,7 @@ import (
 	"context"
 
 	"github.com/awslabs/operatorpkg/controller"
-	"github.com/oracle/karpenter-provider-oci/pkg/controllers/instancetype/capacity"
+	"github.com/oracle/karpenter-provider-oci/pkg/controllers/capacitydiscovery"
 	"github.com/oracle/karpenter-provider-oci/pkg/controllers/nodeclasses"
 	"github.com/oracle/karpenter-provider-oci/pkg/controllers/orphaninstance"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacityreservation"
@@ -45,7 +45,7 @@ func NewControllers(
 	compartmentProvider identity.Provider,
 	clusterPlacementGroupProvider clusterplacementgroup.Provider,
 	cloudProvider cloudprovider.CloudProvider,
-	capacityProvider capacity.CapacityProvider,
+	capacityProvider capacitydiscovery.CapacityProvider,
 ) []controller.Controller {
 	var controllers []controller.Controller
 
@@ -62,7 +62,7 @@ func NewControllers(
 	// entirely when capacity discovery is switched off: otherwise it would keep watching nodes and
 	// reading NodeClaims and NodeClasses to produce measurements nothing would store.
 	if capacityProvider.DiscoveryEnabled() {
-		controllers = append(controllers, capacity.NewController(kubeClient, cloudProvider, capacityProvider))
+		controllers = append(controllers, capacitydiscovery.NewController(kubeClient, cloudProvider, capacityProvider))
 	}
 
 	return controllers

@@ -5,7 +5,7 @@
 ** Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
  */
 
-package capacity
+package capacitydiscovery
 
 import (
 	"context"
@@ -70,8 +70,14 @@ func NewController(kubeClient client.Client, cloudProvider cloudprovider.CloudPr
 	}
 }
 
+// Name is used for both the controller-runtime registration and the logging context, so the two
+// cannot drift apart.
+func (c *Controller) Name() string {
+	return "capacitydiscovery"
+}
+
 func (c *Controller) Reconcile(ctx context.Context, node *v1.Node) (reconcile.Result, error) {
-	ctx = injection.WithControllerName(ctx, "providers.instancetype.capacity")
+	ctx = injection.WithControllerName(ctx, c.Name())
 
 	if !nodeutils.IsManaged(node, c.cloudProvider) {
 		return reconcile.Result{}, nil
@@ -104,7 +110,7 @@ func (c *Controller) Reconcile(ctx context.Context, node *v1.Node) (reconcile.Re
 
 func (c *Controller) Register(_ context.Context, m manager.Manager) error {
 	return controllerruntime.NewControllerManagedBy(m).
-		Named("providers.instancetype.capacity").
+		Named(c.Name()).
 		For(&v1.Node{}, builder.WithPredicates(predicate.TypedFuncs[client.Object]{
 			// A node only reports its real capacity once it registers, so reconciling before then
 			// would read nothing and take the cache lock for no reason.

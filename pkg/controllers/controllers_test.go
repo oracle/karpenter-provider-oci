@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/awslabs/operatorpkg/controller"
-	"github.com/oracle/karpenter-provider-oci/pkg/controllers/instancetype/capacity"
+	"github.com/oracle/karpenter-provider-oci/pkg/controllers/capacitydiscovery"
 	"github.com/oracle/karpenter-provider-oci/pkg/fakes"
 	"github.com/oracle/karpenter-provider-oci/pkg/operator/options"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacityreservation"
@@ -72,7 +72,7 @@ var _ = Describe("OCINodeClass Reconciler", func() {
 
 		hasCapacityController := func(cs []controller.Controller) bool {
 			return lo.ContainsBy(cs, func(c controller.Controller) bool {
-				_, ok := c.(*capacity.Controller)
+				_, ok := c.(*capacitydiscovery.Controller)
 				return ok
 			})
 		}
