@@ -30,6 +30,7 @@ type OciShapeMeta struct {
 	Prices               []ShapePriceInfo `json:"prices"`
 	PreemptibleShapes    []string         `json:"preemptibleShapes"`
 	ComputeClusterShapes []string         `json:"computeClusterShapes"`
+	OneVcpuPerOcpuShapes []string         `json:"oneVcpuPerOcpuShapes"`
 }
 
 // ShapePriceInfo is the structure for the price calculation.
