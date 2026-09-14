@@ -306,7 +306,7 @@ settings:
     baseMiB: 600
     # -- Part of the overhead that scales with declared memory, in MiB per GiB.
     perGBMiB: 19
-    # -- An alternative way of expressing the overhead, as a fraction of declared memory
+    # -- (float) An alternative way of expressing the overhead, as a fraction of declared memory
     # (0.075 == 7.5%). 0 means unused. The larger of the two forms is applied, so setting this
     # can only make the estimate more conservative, never less.
     percent: 0

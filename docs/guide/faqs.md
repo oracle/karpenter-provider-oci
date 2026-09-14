@@ -301,40 +301,34 @@ If you want to run OCI GO SDK in debug mode (Karpenter uses OCI GO SDK to intera
 ### Suggestions regarding KubeletConfig maxPods and podsPerCore
 The value assigned to "podsPerCore" must not exceed the "maxPods" value. Additionally, for environments in which the customer is utilizing an OciVcnIpNative cluster, the "maxPods" value should be less than the aggregate sum of "IpCount" from the secondary VNICs.
 
-### Why does the first node of a given size sometimes not fit the pod that asked for it?
-Karpenter has to choose a node size *before* the node exists, so it works from a model of what a node will have once it boots. If that model is too optimistic the pod that triggered the launch does not fit once the node registers, stays pending, and the same launch is made again.
+### How does KPO account for OCI VM memory overhead and actual node memory capacity?
 
-To stop that repeating, the provider learns from the nodes it creates. When a node registers, a controller reads its real `node.status.capacity.memory` and remembers it, keyed by the instance type and the image the node booted. Later launches of that same combination are modelled from the measurement instead of the estimate, so a bad estimate costs a node rather than an unbounded run of them.
+**Why any of this is needed.** Karpenter has to choose a node size *before* the node exists, so it works from a model of what the node will have once it boots. OCI reserves memory below the guest, so a VM shape advertised as 32 GB presents roughly 30.9 GiB of `MemTotal` to Linux. A model that used the advertised figure would over-state what the node can hold: the pod that triggered the launch would not fit once the node registered, would stay pending, and the same launch would be made again.
 
-Two consequences worth knowing:
+KPO uses two mechanisms for this, in order.
 
-- **The first launch of a given instance type and image is still modelled from the estimate**, since nothing has been measured yet. Only subsequent launches benefit.
-- **The measurements are held in memory**, so they are relearned after a controller restart or a leader change. Nodes that are still running are re-read at startup, so in practice the cache repopulates from the live fleet.
-
-The smallest value observed for a combination is the one kept: nodes of nominally the same kind can report slightly different totals, and modelling the smallest keeps Karpenter on the safe side.
-
-To turn this off, set the TTL to zero. Nothing is then measured, stored or applied: the controller that watches registering nodes is not started, no image is resolved while scheduling, and every launch is modelled from the configured `vmMemoryOverhead` estimate instead. That estimate still applies; to model declared memory unchanged you would also have to set all three `vmMemoryOverhead` values to `0`.
-
-```yaml
-settings:
-  discoveredCapacityTTLHours: 0
-```
-
-The default is `1440` hours (60 days). Entries expire rather than living forever because the smallest-wins rule means a value can never recover upward on its own, and because a host firmware or hypervisor change can alter what a shape presents without anything else invalidating the entry.
-### How does KPO account for OCI VM memory overhead?
-OCI reserves memory below the guest, so a VM shape advertised as 32 GB presents roughly 30.9 GiB of `MemTotal` to Linux. Karpenter has to size a node *before* it exists, so it works from a model rather than a measurement. If that model used the advertised figure it would over-state what the node can hold, the pod that triggered the launch would not fit once the node registered, and — because nothing compares the model against the node it produced — the same launch would repeat.
-
-The provider therefore subtracts a memory overhead from each VM shape's modelled capacity:
+**Before anything has been measured: the configured overhead.** A static, configurable amount is subtracted from each VM shape's declared memory:
 
 ```
-overheadMiB = max(baseMiB + perGBMiB × declaredGiB, percent × declaredMiB)
+overheadMiB = ceil(max(baseMiB + perGBMiB × declaredGiB, percent × declaredMiB))
 ```
 
 Defaults are `600` MiB plus `19` MiB per GiB, which on a 32 GB shape reserves about 1.2 GiB. They are deliberately pessimistic: over-stating capacity causes repeated launches of nodes a pod can never fit on, while under-stating it only leaves a little memory unused.
 
 **Bare metal (`BM.*`) shapes are exempt** and keep their declared memory, since the overhead models a hypervisor and there is none beneath a BM instance.
 
-To tune it, set any of the following under `settings.vmMemoryOverhead` in the Helm values (or the equivalent `VM_MEMORY_OVERHEAD_BASE_MIB`, `VM_MEMORY_OVERHEAD_PER_GB_MIB`, `VM_MEMORY_OVERHEAD_PERCENT` environment variables):
+**After a node registers: the measured capacity.** When a node joins, its real `node.status.capacity.memory` is recorded and reused when modelling later launches of the same instance type and image. So the estimate governs launches made before the first measurement lands; after that Karpenter works from measurement. Pods that fan out into several concurrent launches may produce more than one node before anything has been recorded.
+
+**Which one wins.** A recorded measurement always takes precedence over the estimate, in both directions — a shape may turn out roomier than the pessimistic estimate assumed, as well as smaller. With no measurement, or with discovery disabled, the estimate applies.
+
+**Lifecycle and safety.**
+
+- **The smallest observation wins.** Nodes of nominally the same kind report slightly different totals; modelling the smallest keeps Karpenter on the safe side.
+- **Measurements are grouped by instance type and resolved image.** That grouping is empirical rather than an OCI guarantee — host generation or firmware could move the figure too — which is why the smallest value is kept.
+- **The cache is in memory**, so measurements are relearned after a controller restart or leader change. Nodes still running are re-read at startup, so in practice it repopulates from the live fleet.
+- **Entries expire**, after 60 days by default and sooner if `discoveredCapacityTTLHours` is lowered. Observing the same or a smaller value refreshes the entry, so a combination in active use does not expire; a larger observation is ignored and does not refresh it. Expiry matters because smallest-wins means a value can never recover upward on its own, and because a host change can alter what a shape presents without anything else invalidating the entry.
+
+**Configuration.** The estimate used before anything is measured:
 
 ```yaml
 settings:
@@ -344,6 +338,15 @@ settings:
     percent: 0
 ```
 
-`percent` is an alternative way of expressing the overhead, as a fraction of declared memory (`0.075` == 7.5%). It defaults to `0`, meaning unused. Because the two forms are combined with `max()`, setting it can only ever make the estimate more conservative, never less. Setting all three to `0` disables the adjustment entirely and restores the advertised figure.
+How long a measurement is reused, and how to switch discovery off:
 
-Tighten these only if you have measured `node.status.capacity.memory` on the shapes and images you actually run: a value that leaves Karpenter over-stating a node's memory brings back the repeated-launch behaviour described above.
+```yaml
+settings:
+  discoveredCapacityTTLHours: 1440   # the default; 0 disables discovery
+```
+
+`percent` is an alternative way of expressing the overhead, as a fraction of declared memory (`0.075` == 7.5%). It defaults to `0`, meaning unused. Because the two forms are combined with `max()`, setting it can only ever make the estimate more conservative, never less.
+
+Setting `discoveredCapacityTTLHours: 0` turns off discovery: the controller that watches registering nodes is not started, no image is resolved while scheduling, and every launch is modelled from the estimate. The estimate still applies — to report declared memory unchanged you would also set all three `vmMemoryOverhead` values to `0`.
+
+Tighten either only if you have measured `node.status.capacity.memory` on the shapes and images you actually run: a value that leaves Karpenter over-stating a node's memory brings back the repeated-launch behaviour described above.

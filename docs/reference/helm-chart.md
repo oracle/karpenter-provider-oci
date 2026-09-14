@@ -94,7 +94,7 @@ A Helm chart for Karpenter provider OCI
 | settings.vcnCompartmentId | string | `""` | [required] Cluster's VCN compartment OCID. |
 | settings.vmMemoryOverhead.baseMiB | int | `600` | Fixed part of the overhead, in MiB. |
 | settings.vmMemoryOverhead.perGBMiB | int | `19` | Part of the overhead that scales with declared memory, in MiB per GiB. |
-| settings.vmMemoryOverhead.percent | int | `0` | An alternative way of expressing the overhead, as a fraction of declared memory (0.075 == 7.5%). 0 means unused. The larger of the two forms is applied, so setting this can only make the estimate more conservative, never less. |
+| settings.vmMemoryOverhead.percent | float | `0` | An alternative way of expressing the overhead, as a fraction of declared memory (0.075 == 7.5%). 0 means unused. The larger of the two forms is applied, so setting this can only make the estimate more conservative, never less. |
 | strategy | object | `{"rollingUpdate":{"maxUnavailable":1}}` | Strategy for updating the pod. |
 | terminationGracePeriodSeconds | string | `nil` | Override the default termination grace period for the pod. |
 | tolerations | list | `[{"key":"CriticalAddonsOnly","operator":"Exists"}]` | Tolerations to allow the pod to be scheduled to nodes with taints. |
