@@ -9,6 +9,7 @@ package instancetype
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	ocicore "github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	corev1 "sigs.k8s.io/karpenter/pkg/apis/v1"
@@ -461,4 +463,155 @@ func TestDefaultProviderSatisfiesBothInterfaces(t *testing.T) {
 
 	assert.NotNil(t, listing)
 	assert.True(t, discovery.DiscoveryEnabled())
+}
+
+// The static VM memory overhead (#73) and discovered capacity (#77) both decide what memory an
+// instance type reports, so what matters is their precedence and that neither silently defeats the
+// other. The earlier tests here predate #73 and ran against a capacity calculation with no
+// overhead in it, so they could not observe the interaction at all.
+func TestDiscoveredCapacityAndStaticOverhead(t *testing.T) {
+	const (
+		declaredGiB = 32
+		declaredMiB = declaredGiB * 1024               // 32768
+		overheadMiB = DefaultVMMemoryOverheadBaseMiB + // 600
+			DefaultVMMemoryOverheadPerGBMiB*declaredGiB // + 19*32 = 1208
+		estimateMiB = declaredMiB - overheadMiB // 31560
+		measuredMiB = 31631                     // real E5 32 GB, from issue #7
+	)
+
+	nodeClass := &ociv1beta1.OCINodeClass{
+		Spec: ociv1beta1.OCINodeClassSpec{
+			VolumeConfig:  &ociv1beta1.VolumeConfig{BootVolumeConfig: &ociv1beta1.BootVolumeConfig{}},
+			NetworkConfig: &ociv1beta1.NetworkConfig{},
+		},
+	}
+	shapeAndAd := &ShapeAndAd{
+		Shape: &ocicore.Shape{
+			Shape: lo.ToPtr("VM.Standard.E5.Flex"), Ocpus: lo.ToPtr(float32(8)),
+			MemoryInGBs: lo.ToPtr(float32(declaredGiB)), BillingType: ocicore.ShapeBillingTypePaid,
+		},
+		Ads: []string{"tenancy:PHX-AD-1"},
+	}
+	newProvider := func() *DefaultProvider {
+		return &DefaultProvider{
+			shapeToPrice: map[string]*ShapePriceInfo{
+				"VM.STANDARD.E5.FLEX": {
+					ShapeName: lo.ToPtr("VM.Standard.E5.Flex"), OcpuUnitPrice: 0.05,
+					MemoryUnitPrice: 0.01, DiskUnitPrice: 0,
+				},
+			},
+			preemptibleShapes:  PreemptibleShapes{"VM.STANDARD.E5": "VM.Standard.E5"},
+			vmMemoryOverhead:   defaultVMMemoryOverhead,
+			discoveredCapacity: cache.NewDiscoveredCapacity(cache.DiscoveredCapacityTTL),
+			imageProvider:      &fakeImageProvider{imageID: testImageID},
+		}
+	}
+	newInstanceType := func() *OciInstanceType {
+		return &OciInstanceType{
+			InstanceType: cloudprovider.InstanceType{Name: "VM.Standard.E5.Flex"},
+			Shape:        "VM.Standard.E5.Flex",
+			Ocpu:         lo.ToPtr(float32(8)),
+			MemoryInGbs:  lo.ToPtr(float32(declaredGiB)),
+		}
+	}
+	memoryMiB := func(it *OciInstanceType) int64 { return it.Capacity.Memory().Value() / 1024 / 1024 }
+
+	t.Run("before any measurement the static estimate governs", func(t *testing.T) {
+		p := newProvider()
+		it := newInstanceType()
+
+		_ = p.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil, testImageID)
+
+		assert.Equal(t, int64(estimateMiB), memoryMiB(it),
+			"with nothing measured, capacity is declared memory minus the configured overhead")
+	})
+
+	t.Run("a measurement overrides the static estimate", func(t *testing.T) {
+		p := newProvider()
+		p.discoveredCapacity.Record(context.Background(),
+			discoveredCapacityCacheKey("VM.Standard.E5.Flex", testImageID),
+			resource.MustParse(fmt.Sprintf("%dMi", measuredMiB)))
+
+		it := newInstanceType()
+		_ = p.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil, testImageID)
+
+		assert.Equal(t, int64(measuredMiB), memoryMiB(it),
+			"measurement wins over the estimate")
+		assert.Greater(t, memoryMiB(it), int64(estimateMiB),
+			"this shape really is roomier than the deliberately pessimistic estimate, so the "+
+				"override must be able to raise capacity as well as lower it")
+	})
+
+	t.Run("the estimate does not clamp a measurement", func(t *testing.T) {
+		// A node smaller than the estimate must be believed: the estimate is a guess, the
+		// measurement is a fact, and refusing to go below it would reintroduce over-modelling.
+		const smallerThanEstimate = estimateMiB - 500
+
+		p := newProvider()
+		p.discoveredCapacity.Record(context.Background(),
+			discoveredCapacityCacheKey("VM.Standard.E5.Flex", testImageID),
+			resource.MustParse(fmt.Sprintf("%dMi", smallerThanEstimate)))
+
+		it := newInstanceType()
+		_ = p.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil, testImageID)
+
+		assert.Equal(t, int64(smallerThanEstimate), memoryMiB(it))
+	})
+
+	t.Run("discovery disabled leaves the static estimate intact", func(t *testing.T) {
+		p := newProvider()
+		p.discoveredCapacity = cache.NewDiscoveredCapacity(0)
+
+		it := newInstanceType()
+		// Disabled means no image is resolved, so decoration receives no image id.
+		_ = p.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil, "")
+
+		assert.Equal(t, int64(estimateMiB), memoryMiB(it),
+			"turning discovery off must fall back to #73's estimate, not to declared memory")
+		assert.Less(t, memoryMiB(it), int64(declaredMiB))
+	})
+
+	// The subtests above hand decorateInstanceType an image id directly, which skips the step that
+	// produces it. Drive one case through makeInstanceTypes so the resolution handoff is covered:
+	// resolveImageForDiscovery returning "" would otherwise silently disable discovery in real
+	// listings while every assertion above still passed.
+	t.Run("resolution handoff reaches the lookup", func(t *testing.T) {
+		fixedShape := &ShapeAndAd{
+			Shape: &ocicore.Shape{
+				Shape: lo.ToPtr("VM.Standard2.8"), IsFlexible: lo.ToPtr(false),
+				Ocpus: lo.ToPtr(float32(8)), MemoryInGBs: lo.ToPtr(float32(declaredGiB)),
+				BillingType: ocicore.ShapeBillingTypePaid,
+			},
+			Ads: []string{"tenancy:PHX-AD-1"},
+		}
+
+		p := newProvider()
+		p.shapeToPrice["VM.STANDARD2.8"] = &ShapePriceInfo{
+			ShapeName: lo.ToPtr("VM.Standard2.8"), OcpuUnitPrice: 0.05, MemoryUnitPrice: 0.01,
+		}
+		// Recorded under the id the fake image provider resolves to, which only matches if
+		// makeInstanceTypes actually asks for it and threads the answer through.
+		p.discoveredCapacity.Record(context.Background(),
+			discoveredCapacityCacheKey("VM.Standard2.8", testImageID),
+			resource.MustParse(fmt.Sprintf("%dMi", measuredMiB)))
+
+		its, err := p.makeInstanceTypes(context.Background(), fixedShape, nodeClass, nil)
+
+		require.NoError(t, err)
+		require.Len(t, its, 1)
+		assert.Equal(t, int64(measuredMiB), memoryMiB(its[0]),
+			"the measurement must reach capacity through the real resolution path")
+	})
+
+	t.Run("both disabled reports declared memory", func(t *testing.T) {
+		p := newProvider()
+		p.vmMemoryOverhead = VMMemoryOverheadConfig{}
+		p.discoveredCapacity = cache.NewDiscoveredCapacity(0)
+
+		it := newInstanceType()
+		_ = p.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil, "")
+
+		assert.Equal(t, int64(declaredMiB), memoryMiB(it),
+			"only with both switched off is declared memory reported unchanged")
+	})
 }
