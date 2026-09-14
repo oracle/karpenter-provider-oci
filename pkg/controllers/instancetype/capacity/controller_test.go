@@ -41,13 +41,15 @@ func init() {
 // recordingProvider captures what the controller passes on, so these tests assert the controller's
 // own decisions rather than capacity arithmetic, which is covered in the instancetype package.
 type recordingProvider struct {
-	nodes []*v1.Node
-	err   error
+	nodes      []*v1.Node
+	nodeClaims []*karpv1.NodeClaim
+	err        error
 }
 
 func (r *recordingProvider) UpdateInstanceTypeCapacityFromNode(_ context.Context, node *v1.Node,
-	_ *karpv1.NodeClaim) error {
+	nodeClaim *karpv1.NodeClaim) error {
 	r.nodes = append(r.nodes, node)
+	r.nodeClaims = append(r.nodeClaims, nodeClaim)
 	return r.err
 }
 
@@ -142,6 +144,14 @@ func TestReconcile_RecordsWithoutReadingTheNodeClass(t *testing.T) {
 	assert.Zero(t, res.RequeueAfter)
 	require.Len(t, p.nodes, 1, "the observation must be recorded even with no NodeClass present")
 	assert.Equal(t, node.Name, p.nodes[0].Name)
+
+	// The NodeClaim carries the ImageID that forms half the cache key, so passing the wrong one -
+	// or nil - would leave the provider unable to record anything.
+	require.Len(t, p.nodeClaims, 1)
+	require.NotNil(t, p.nodeClaims[0], "the fetched NodeClaim must be passed through")
+	assert.Equal(t, "ocid1.image.oc1..a", p.nodeClaims[0].Status.ImageID)
+	assert.Equal(t, node.Spec.ProviderID, p.nodeClaims[0].Status.ProviderID,
+		"the NodeClaim passed must be the one matching this node")
 }
 
 // A node with no NodeClaim cannot be attributed to an instance type and image, so there is nothing
