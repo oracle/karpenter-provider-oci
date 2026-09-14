@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/awslabs/operatorpkg/controller"
-	"github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/controllers/instancetype/capacity"
 	"github.com/oracle/karpenter-provider-oci/pkg/fakes"
 	"github.com/oracle/karpenter-provider-oci/pkg/operator/options"
@@ -97,6 +96,6 @@ type fakeCapacityProvider struct{ enabled bool }
 func (f *fakeCapacityProvider) DiscoveryEnabled() bool { return f.enabled }
 
 func (f *fakeCapacityProvider) UpdateInstanceTypeCapacityFromNode(_ context.Context, _ *corev1.Node,
-	_ *karpv1.NodeClaim, _ *v1beta1.OCINodeClass) error {
+	_ *karpv1.NodeClaim) error {
 	return nil
 }

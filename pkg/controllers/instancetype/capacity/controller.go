@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/awslabs/operatorpkg/reasonable"
-	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/instancetype"
 	v1 "k8s.io/api/core/v1"
 	controllerruntime "sigs.k8s.io/controller-runtime"
@@ -41,7 +40,7 @@ const capacityNotReportedRequeue = 15 * time.Second
 // on the one operation it performs.
 type CapacityProvider interface {
 	UpdateInstanceTypeCapacityFromNode(ctx context.Context, node *v1.Node,
-		nodeClaim *corev1.NodeClaim, nodeClass *ociv1beta1.OCINodeClass) error
+		nodeClaim *corev1.NodeClaim) error
 
 	// DiscoveryEnabled reports whether measurements are used at all. When they are not, this
 	// controller has nothing to contribute and is not registered, so a disabled feature costs no
@@ -86,16 +85,11 @@ func (c *Controller) Reconcile(ctx context.Context, node *v1.Node) (reconcile.Re
 			fmt.Errorf("getting nodeclaim for node, %w", err))
 	}
 
-	if nodeClaim.Spec.NodeClassRef == nil {
-		return reconcile.Result{}, nil
-	}
-
-	nodeClass := &ociv1beta1.OCINodeClass{}
-	if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); err != nil {
-		return reconcile.Result{}, client.IgnoreNotFound(fmt.Errorf("getting ocinodeclass, %w", err))
-	}
-
-	if err := c.capacityProvider.UpdateInstanceTypeCapacityFromNode(ctx, node, nodeClaim, nodeClass); err != nil {
+	// The measurement is keyed by the Node's instance-type label and the NodeClaim's ImageID, so
+	// the OCINodeClass is not consulted. Not reading it saves an API call for every registered
+	// node, and stops a NodeClass that has since been deleted or renamed from discarding an
+	// otherwise valid observation.
+	if err := c.capacityProvider.UpdateInstanceTypeCapacityFromNode(ctx, node, nodeClaim); err != nil {
 		if errors.Is(err, instancetype.ErrCapacityNotReported) {
 			// The node registered before publishing its memory. We only watch the transition into
 			// the registered state, so without an explicit requeue this node would never be

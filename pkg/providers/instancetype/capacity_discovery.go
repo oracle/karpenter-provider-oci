@@ -30,8 +30,8 @@ var ErrCapacityNotReported = errors.New("node has not reported memory capacity y
 // than guessed, because a wrong entry here is worse than no entry — it would be reused for every
 // subsequent launch of that combination.
 func (p *DefaultProvider) UpdateInstanceTypeCapacityFromNode(ctx context.Context, node *v1.Node,
-	nodeClaim *corev1.NodeClaim, nodeClass *ociv1beta1.OCINodeClass) error {
-	if node == nil || nodeClaim == nil || nodeClass == nil {
+	nodeClaim *corev1.NodeClaim) error {
+	if node == nil || nodeClaim == nil {
 		return nil
 	}
 

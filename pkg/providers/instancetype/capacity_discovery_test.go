@@ -103,10 +103,9 @@ func discoveryProvider() *DefaultProvider {
 // of that combination is sized from measurement rather than the estimate.
 func TestUpdateInstanceTypeCapacityFromNode_RecordsObservedMemory(t *testing.T) {
 	p := discoveryProvider()
-	nc := discoveryNodeClass("ocid1.image.oc1..a")
 
 	err := p.UpdateInstanceTypeCapacityFromNode(context.Background(),
-		discoveryNode(testInstanceTypeName, "30890Mi"), discoveryNodeClaim("ocid1.image.oc1..a"), nc)
+		discoveryNode(testInstanceTypeName, "30890Mi"), discoveryNodeClaim("ocid1.image.oc1..a"))
 	assert.NoError(t, err)
 
 	got, ok := p.discoveredCapacity.Get(discoveredCapacityCacheKey(testInstanceTypeName, testImageID))
@@ -120,13 +119,12 @@ func TestUpdateInstanceTypeCapacityFromNode_RecordsObservedMemory(t *testing.T) 
 // while under-estimating only wastes memory.
 func TestUpdateInstanceTypeCapacityFromNode_KeepsSmallestObserved(t *testing.T) {
 	p := discoveryProvider()
-	nc := discoveryNodeClass("ocid1.image.oc1..a")
 	ctx := context.Background()
 	key := discoveredCapacityCacheKey(testInstanceTypeName, testImageID)
 
 	for _, mem := range []string{"30890Mi", "30800Mi", "31000Mi"} {
 		assert.NoError(t, p.UpdateInstanceTypeCapacityFromNode(ctx,
-			discoveryNode(testInstanceTypeName, mem), discoveryNodeClaim("ocid1.image.oc1..a"), nc))
+			discoveryNode(testInstanceTypeName, mem), discoveryNodeClaim("ocid1.image.oc1..a")))
 	}
 
 	got, ok := p.discoveredCapacity.Get(key)
@@ -141,21 +139,18 @@ func TestUpdateInstanceTypeCapacityFromNode_Skips(t *testing.T) {
 		name      string
 		node      *v1.Node
 		nodeClaim *corev1.NodeClaim
-		nodeClass *ociv1beta1.OCINodeClass
 		reason    string
 	}{
 		{
 			name:      "no instance-type label",
 			node:      discoveryNode("", "30890Mi"),
 			nodeClaim: discoveryNodeClaim("ocid1.image.oc1..a"),
-			nodeClass: discoveryNodeClass("ocid1.image.oc1..a"),
 			reason:    "there is nothing to key the measurement on",
 		},
 		{
 			name:      "nodeclaim has no image id",
 			node:      discoveryNode(testInstanceTypeName, "30890Mi"),
 			nodeClaim: discoveryNodeClaim(""),
-			nodeClass: discoveryNodeClass("ocid1.image.oc1..a"),
 			reason:    "we cannot tell which image produced this measurement",
 		},
 	}
@@ -165,7 +160,7 @@ func TestUpdateInstanceTypeCapacityFromNode_Skips(t *testing.T) {
 			p := discoveryProvider()
 
 			assert.NoError(t, p.UpdateInstanceTypeCapacityFromNode(
-				context.Background(), tt.node, tt.nodeClaim, tt.nodeClass))
+				context.Background(), tt.node, tt.nodeClaim))
 
 			_, ok := p.discoveredCapacity.Get(discoveredCapacityCacheKey(testInstanceTypeName, testImageID))
 			assert.False(t, ok, "must not record: %s", tt.reason)
@@ -176,12 +171,12 @@ func TestUpdateInstanceTypeCapacityFromNode_Skips(t *testing.T) {
 func TestUpdateInstanceTypeCapacityFromNode_NilInputs(t *testing.T) {
 	p := discoveryProvider()
 	ctx := context.Background()
-	nc := discoveryNodeClass("ocid1.image.oc1..a")
 
-	assert.NoError(t, p.UpdateInstanceTypeCapacityFromNode(ctx, nil, discoveryNodeClaim("a"), nc))
-	assert.NoError(t, p.UpdateInstanceTypeCapacityFromNode(ctx, discoveryNode(testInstanceTypeName, "1Gi"), nil, nc))
-	assert.NoError(t, p.UpdateInstanceTypeCapacityFromNode(ctx, discoveryNode(testInstanceTypeName, "1Gi"),
-		discoveryNodeClaim("a"), nil))
+	assert.NoError(t, p.UpdateInstanceTypeCapacityFromNode(ctx, nil, discoveryNodeClaim("a")))
+	assert.NoError(t, p.UpdateInstanceTypeCapacityFromNode(ctx, discoveryNode(testInstanceTypeName, "1Gi"), nil))
+
+	_, ok := p.discoveredCapacity.Get(discoveredCapacityCacheKey(testInstanceTypeName, "a"))
+	assert.False(t, ok, "a nil node or nodeclaim must record nothing")
 }
 
 // The key names the image a node actually booted, so a measurement taken under one image is never
@@ -208,7 +203,7 @@ func TestDiscoveredCapacity_UnrelatedImageDoesNotInvalidate(t *testing.T) {
 	ctx := context.Background()
 
 	assert.NoError(t, p.UpdateInstanceTypeCapacityFromNode(ctx,
-		discoveryNode(testInstanceTypeName, "30890Mi"), discoveryNodeClaim(testImageID), nc))
+		discoveryNode(testInstanceTypeName, "30890Mi"), discoveryNodeClaim(testImageID)))
 
 	// A new image is published and joins the candidate list, but this shape still selects the same
 	// one, so the measurement must still be found.
@@ -300,10 +295,9 @@ func TestApplyDiscoveredCapacity(t *testing.T) {
 // A disabled cache must leave modelling exactly as it was, so the feature can be turned off.
 func TestDiscoveredCapacityDisabled(t *testing.T) {
 	p := &DefaultProvider{discoveredCapacity: cache.NewDiscoveredCapacity(0)}
-	nc := discoveryNodeClass("ocid1.image.oc1..a")
 
 	assert.NoError(t, p.UpdateInstanceTypeCapacityFromNode(context.Background(),
-		discoveryNode(testInstanceTypeName, "30890Mi"), discoveryNodeClaim("ocid1.image.oc1..a"), nc))
+		discoveryNode(testInstanceTypeName, "30890Mi"), discoveryNodeClaim("ocid1.image.oc1..a")))
 
 	it := &OciInstanceType{}
 	it.Name = testInstanceTypeName
@@ -319,10 +313,9 @@ func TestDiscoveredCapacityDisabled(t *testing.T) {
 // only watches the transition into the registered state, so nothing else would bring it back.
 func TestUpdateInstanceTypeCapacityFromNode_RetriesWhenMemoryNotReported(t *testing.T) {
 	p := discoveryProvider()
-	nc := discoveryNodeClass("ocid1.image.oc1..a")
 
 	err := p.UpdateInstanceTypeCapacityFromNode(context.Background(),
-		discoveryNode(testInstanceTypeName, ""), discoveryNodeClaim("ocid1.image.oc1..a"), nc)
+		discoveryNode(testInstanceTypeName, ""), discoveryNodeClaim("ocid1.image.oc1..a"))
 
 	assert.ErrorIs(t, err, ErrCapacityNotReported)
 	_, ok := p.discoveredCapacity.Get(discoveredCapacityCacheKey(testInstanceTypeName, testImageID))
@@ -356,13 +349,12 @@ func TestDiscoveredCapacity_EqualObservationRefreshesTTL(t *testing.T) {
 // current image's estimate nor needs a staleness guard to suppress it.
 func TestUpdateInstanceTypeCapacityFromNode_OldImageDoesNotLeak(t *testing.T) {
 	p := discoveryProvider()
-	nc := discoveryNodeClass(testImageID)
 	ctx := context.Background()
 
 	// A node launched earlier, from an image this NodeClass no longer selects.
 	assert.NoError(t, p.UpdateInstanceTypeCapacityFromNode(ctx,
 		discoveryNode(testInstanceTypeName, "20000Mi"),
-		discoveryNodeClaim("ocid1.image.oc1..superseded"), nc))
+		discoveryNodeClaim("ocid1.image.oc1..superseded")))
 
 	it := &OciInstanceType{}
 	it.Name = testInstanceTypeName
