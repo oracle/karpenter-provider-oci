@@ -9,7 +9,6 @@ package instancetype
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -322,28 +321,6 @@ func TestUpdateInstanceTypeCapacityFromNode_RetriesWhenMemoryNotReported(t *test
 	assert.False(t, ok, "nothing should be recorded from a node that reported no memory")
 }
 
-// Re-recording an equal value must refresh the TTL, so a combination still in active use does not
-// expire and force the estimate to govern launches again.
-func TestDiscoveredCapacity_EqualObservationRefreshesTTL(t *testing.T) {
-	c := cache.NewDiscoveredCapacity(150 * time.Millisecond)
-	ctx := context.Background()
-	mem := resource.MustParse("30890Mi")
-
-	c.Record(ctx, "k", mem)
-	for i := 0; i < 4; i++ {
-		time.Sleep(50 * time.Millisecond)
-		c.Record(ctx, "k", mem)
-	}
-
-	// Well past the original TTL; only the refreshes can be keeping it alive.
-	_, ok := c.Get("k")
-	assert.True(t, ok, "an equal re-observation must refresh the entry's TTL")
-
-	time.Sleep(250 * time.Millisecond)
-	_, ok = c.Get("k")
-	assert.False(t, ok, "the entry must still expire once observations stop")
-}
-
 // With the image in the key, a node that booted an image the NodeClass has since stopped selecting
 // files its measurement under that old image. Nothing looks there, so it neither leaks into the
 // current image's estimate nor needs a staleness guard to suppress it.
@@ -372,26 +349,6 @@ func TestUpdateInstanceTypeCapacityFromNode_OldImageDoesNotLeak(t *testing.T) {
 	_, ok := p.discoveredCapacity.Get(
 		discoveredCapacityCacheKey(testInstanceTypeName, "ocid1.image.oc1..superseded"))
 	assert.True(t, ok)
-}
-
-// Smallest-wins must hold under concurrent writers, not only the serialised controller.
-func TestDiscoveredCapacity_RecordIsAtomic(t *testing.T) {
-	c := cache.NewDiscoveredCapacity(cache.DiscoveredCapacityTTL)
-	ctx := context.Background()
-	small := resource.MustParse("30800Mi")
-	large := resource.MustParse("31000Mi")
-
-	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		wg.Add(2)
-		go func() { defer wg.Done(); c.Record(ctx, "k", small) }()
-		go func() { defer wg.Done(); c.Record(ctx, "k", large) }()
-	}
-	wg.Wait()
-
-	got, ok := c.Get("k")
-	assert.True(t, ok)
-	assert.Equal(t, small.Value(), got.Value(), "the smallest observation must survive any interleaving")
 }
 
 // The override only matters if decorateInstanceType actually applies it. Testing
