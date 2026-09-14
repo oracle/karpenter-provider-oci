@@ -28,7 +28,7 @@ func TestNewProvider(t *testing.T) {
 	startCh := make(chan struct{})
 	close(startCh) // Close immediately to prevent refresh goroutine
 
-	provider, err := NewProvider(context.Background(), nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, err := NewProvider(context.Background(), nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, provider)
@@ -159,7 +159,7 @@ func TestResolveImages(t *testing.T) {
 
 			startCh := make(chan struct{})
 			close(startCh)
-			provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+			provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 
 			result, err := provider.ResolveImages(ctx, tt.config)
 
@@ -180,7 +180,7 @@ func TestListShapesForImage(t *testing.T) {
 	fakeClient := &fakes.FakeCompute{}
 	startCh := make(chan struct{})
 	close(startCh)
-	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 
 	// Setup shape compatibility response
 	fakeClient.ListImageShapeCompatibilityEntriesResp = ocicore.ListImageShapeCompatibilityEntriesResponse{
@@ -202,7 +202,7 @@ func TestResolveImageForShape(t *testing.T) {
 	fakeClient := &fakes.FakeCompute{}
 	startCh := make(chan struct{})
 	close(startCh)
-	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 
 	// Setup base image resolution
 	imageConfig := &v1beta1.ImageConfig{
@@ -446,7 +446,7 @@ func TestFilterImage(t *testing.T) {
 
 			startCh := make(chan struct{})
 			close(startCh)
-			provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+			provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 
 			images, err := provider.filterImage(ctx, tt.imageType, tt.filter)
 
@@ -466,7 +466,7 @@ func TestListAndFilterImages(t *testing.T) {
 	fakeClient := &fakes.FakeCompute{}
 	startCh := make(chan struct{})
 	close(startCh)
-	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 
 	// Setup mock response
 	fakeClient.ListImagesResp = ocicore.ListImagesResponse{
@@ -505,7 +505,7 @@ func TestToImageResolveResult(t *testing.T) {
 	fakeClient := &fakes.FakeCompute{}
 	startCh := make(chan struct{})
 	close(startCh)
-	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 
 	tests := []struct {
 		name     string
@@ -592,7 +592,7 @@ func TestFilterAndSortImages(t *testing.T) {
 	fakeClient := &fakes.FakeCompute{}
 	startCh := make(chan struct{})
 	close(startCh)
-	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 
 	// Set up a mock k8s version
 	provider.k8sVersion = &semver.Version{Major: 1, Minor: 27}
@@ -673,7 +673,7 @@ func TestExtractKubeletVersionFromPreBakedImage(t *testing.T) {
 			fakeClient := &fakes.FakeCompute{}
 			startCh := make(chan struct{})
 			close(startCh)
-			provider, err := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+			provider, err := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 			assert.NoError(t, err)
 
 			result, err := provider.extractKubeletVersionFromPreBakedImage(ctx, tt.image)
@@ -742,7 +742,7 @@ func TestExtractKubeletVersionFromPreBakedImage_BaseImageLookup(t *testing.T) {
 	fakeClient := &fakes.FakeCompute{}
 	startCh := make(chan struct{})
 	close(startCh)
-	provider, err := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, err := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 	assert.NoError(t, err)
 
 	child := &ocicore.Image{
@@ -775,7 +775,7 @@ func TestExtractKubeletVersionFromPreBakedImage_DeepChain(t *testing.T) {
 	fakeClient := &fakes.FakeCompute{}
 	startCh := make(chan struct{})
 	close(startCh)
-	provider, err := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, err := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 	assert.NoError(t, err)
 
 	child := &ocicore.Image{
@@ -819,7 +819,7 @@ func TestExtractKubeletVersionFromPreBakedImage_NotFoundInChain(t *testing.T) {
 	fakeClient := &fakes.FakeCompute{}
 	startCh := make(chan struct{})
 	close(startCh)
-	provider, err := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, err := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 	assert.NoError(t, err)
 
 	child := &ocicore.Image{
@@ -863,7 +863,7 @@ func TestGetImageCaching(t *testing.T) {
 	fakeClient := &fakes.FakeCompute{}
 	startCh := make(chan struct{})
 	close(startCh)
-	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 
 	fakeClient.GetImageResp = ocicore.GetImageResponse{
 		Image: ocicore.Image{
@@ -893,7 +893,7 @@ func TestListShapesForImageCaching(t *testing.T) {
 	fakeClient := &fakes.FakeCompute{}
 	startCh := make(chan struct{})
 	close(startCh)
-	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 
 	fakeClient.ListImageShapeCompatibilityEntriesResp = ocicore.ListImageShapeCompatibilityEntriesResponse{
 		Items: []ocicore.ImageShapeCompatibilitySummary{
@@ -919,7 +919,7 @@ func TestFilterImageCaching(t *testing.T) {
 	fakeClient := &fakes.FakeCompute{}
 	startCh := make(chan struct{})
 	close(startCh)
-	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 
 	filter := v1beta1.ImageSelectorTerm{
 		OsFilter: "Oracle Linux",
@@ -953,7 +953,7 @@ func TestFilterAndSortImages_K8sVersionMissing(t *testing.T) {
 	fakeClient := &fakes.FakeCompute{}
 	startCh := make(chan struct{})
 	close(startCh)
-	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 
 	// Do not set k8sVersion
 	// provider.k8sVersion is nil
@@ -984,7 +984,7 @@ func TestToImageResolveResult_CioHardened(t *testing.T) {
 	fakeClient := &fakes.FakeCompute{}
 	startCh := make(chan struct{})
 	close(startCh)
-	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 
 	images := []*ocicore.Image{
 		{
@@ -1006,7 +1006,7 @@ func TestFilterAndSortImages_ExtractVersionError(t *testing.T) {
 	fakeClient := &fakes.FakeCompute{}
 	startCh := make(chan struct{})
 	close(startCh)
-	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 
 	// Set up a mock k8s version
 	version, _ := semver.NewVersion("1.27.0")
@@ -1038,7 +1038,7 @@ func TestListAndFilterImages_Pagination(t *testing.T) {
 	fakeClient := &fakes.FakeCompute{}
 	startCh := make(chan struct{})
 	close(startCh)
-	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh, false, 0)
 
 	// Set up pagination - first response has items and next page
 	fakeClient.OnListImages = func(ctx context.Context, req ocicore.ListImagesRequest) (
