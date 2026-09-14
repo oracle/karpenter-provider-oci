@@ -13,6 +13,7 @@ import (
 	"fmt"
 
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
+	"github.com/oracle/karpenter-provider-oci/pkg/cache"
 	v1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	corev1 "sigs.k8s.io/karpenter/pkg/apis/v1"
@@ -81,13 +82,32 @@ func (p *DefaultProvider) resolveImageForDiscovery(ctx context.Context, shape st
 		return ""
 	}
 
+	// A recent failure for this shape suppresses further attempts. The image provider does not
+	// cache failed loads, so without this a broken or expired lookup is retried for every shape on
+	// every listing, each with its own retries, while this call tree holds the provider read lock.
+	if p.imageResolutionFailures.RecentlyFailed(shape) {
+		return ""
+	}
+
+	// Bound a single attempt. Discovery is an optimisation over the modelled estimate, so a slow
+	// image API must degrade the model rather than delay scheduling.
+	timeout := p.imageResolutionTimeout
+	if timeout <= 0 {
+		timeout = cache.ImageResolutionTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	resolved, err := p.imageProvider.ResolveImageForShape(ctx,
 		nodeClass.Spec.VolumeConfig.BootVolumeConfig.ImageConfig, shape)
 	if err != nil || resolved == nil || len(resolved.Images) == 0 || resolved.Images[0].Id == nil {
+		p.imageResolutionFailures.RecordFailure(shape)
 		log.FromContext(ctx).V(1).Info("skipping discovered capacity: cannot resolve image for shape",
-			"shape", shape)
+			"shape", shape, "suppressing-for", cache.ImageResolutionFailureTTL)
 		return ""
 	}
+
+	p.imageResolutionFailures.RecordSuccess()
 
 	return *resolved.Images[0].Id
 }

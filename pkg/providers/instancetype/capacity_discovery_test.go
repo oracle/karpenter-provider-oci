@@ -37,6 +37,12 @@ const (
 type fakeImageProvider struct {
 	imageID string
 	err     error
+	// block, when set, holds the resolver until released or the context is cancelled, so the
+	// timeout can be observed.
+	block chan struct{}
+	// failShapes, when set, fails only for those shapes and succeeds for the rest, modelling one
+	// shape with no compatible image among healthy ones.
+	failShapes map[string]bool
 	// gotShapes records what resolution was asked for, so passing the wrong identifier - the
 	// instance type name instead of the shape, say - cannot pass unnoticed.
 	gotShapes []string
@@ -46,9 +52,19 @@ func (f *fakeImageProvider) ResolveImages(context.Context, *ociv1beta1.ImageConf
 	return f.resolve()
 }
 
-func (f *fakeImageProvider) ResolveImageForShape(_ context.Context, _ *ociv1beta1.ImageConfig,
+func (f *fakeImageProvider) ResolveImageForShape(ctx context.Context, _ *ociv1beta1.ImageConfig,
 	shape string) (*image.ImageResolveResult, error) {
 	f.gotShapes = append(f.gotShapes, shape)
+	if f.block != nil {
+		select {
+		case <-f.block:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if f.failShapes[shape] {
+		return nil, assert.AnError
+	}
 	return f.resolve()
 }
 
@@ -614,4 +630,163 @@ func TestDiscoveredCapacityAndStaticOverhead(t *testing.T) {
 		assert.Equal(t, int64(declaredMiB), memoryMiB(it),
 			"only with both switched off is declared memory reported unchanged")
 	})
+}
+
+// Failed resolutions are not cached by the image provider, so without suppression a broken lookup
+// is reissued for every shape on every listing, each with its own retries, while the instance type
+// provider holds its read lock.
+func TestResolveImageForDiscovery_SuppressesRepeatedFailures(t *testing.T) {
+	fake := &fakeImageProvider{err: assert.AnError}
+	p := &DefaultProvider{
+		discoveredCapacity:      cache.NewDiscoveredCapacity(cache.DiscoveredCapacityTTL),
+		imageProvider:           fake,
+		imageResolutionFailures: cache.NewImageResolutionFailures(cache.ImageResolutionFailureTTL),
+	}
+	nc := discoveryNodeClass(testImageID)
+
+	for i := 0; i < 5; i++ {
+		assert.Equal(t, "", p.resolveImageForDiscovery(context.Background(), testShape, nc))
+	}
+
+	assert.Len(t, fake.gotShapes, 1,
+		"after the first failure the shape must be suppressed, not retried on every call")
+}
+
+// Suppression is per shape, so one shape with no compatible image must not disable discovery for
+// the rest of the listing.
+func TestResolveImageForDiscovery_SuppressionIsPerShape(t *testing.T) {
+	fake := &fakeImageProvider{err: assert.AnError}
+	p := &DefaultProvider{
+		discoveredCapacity:      cache.NewDiscoveredCapacity(cache.DiscoveredCapacityTTL),
+		imageProvider:           fake,
+		imageResolutionFailures: cache.NewImageResolutionFailures(cache.ImageResolutionFailureTTL),
+	}
+	nc := discoveryNodeClass(testImageID)
+
+	p.resolveImageForDiscovery(context.Background(), "VM.Standard.E5.Flex", nc)
+	p.resolveImageForDiscovery(context.Background(), "VM.Standard.E5.Flex", nc)
+	p.resolveImageForDiscovery(context.Background(), "VM.Standard.A1.Flex", nc)
+
+	assert.Equal(t, []string{"VM.Standard.E5.Flex", "VM.Standard.A1.Flex"}, fake.gotShapes,
+		"the second shape must still be attempted despite the first having failed")
+}
+
+// A hung image API must degrade the model, not hold up scheduling: resolution is bounded from
+// inside, so it returns no key even when the caller imposes no deadline of its own.
+func TestResolveImageForDiscovery_TimesOut(t *testing.T) {
+	fake := &fakeImageProvider{imageID: testImageID, block: make(chan struct{})}
+	defer close(fake.block)
+
+	p := &DefaultProvider{
+		discoveredCapacity:      cache.NewDiscoveredCapacity(cache.DiscoveredCapacityTTL),
+		imageProvider:           fake,
+		imageResolutionFailures: cache.NewImageResolutionFailures(cache.ImageResolutionFailureTTL),
+		imageResolutionTimeout:  50 * time.Millisecond,
+	}
+
+	// context.Background() deliberately: the bound must come from the provider, not the caller.
+	// The watchdog matters - without the production timeout this call never returns, and a bare
+	// assertion would hang until Go's ten-minute test limit rather than failing.
+	done := make(chan string, 1)
+	go func() {
+		done <- p.resolveImageForDiscovery(context.Background(), testShape, discoveryNodeClass(testImageID))
+	}()
+
+	select {
+	case got := <-done:
+		assert.Equal(t, "", got, "a resolution that does not complete must yield no key")
+	case <-time.After(2 * time.Second):
+		t.Fatal("resolveImageForDiscovery did not return: the provider is not bounding the attempt")
+	}
+}
+
+func TestResolveImageForDiscovery_TimeoutFallsBackWhenUnset(t *testing.T) {
+	p := &DefaultProvider{
+		discoveredCapacity:      cache.NewDiscoveredCapacity(cache.DiscoveredCapacityTTL),
+		imageProvider:           &fakeImageProvider{imageID: testImageID},
+		imageResolutionFailures: cache.NewImageResolutionFailures(cache.ImageResolutionFailureTTL),
+		// imageResolutionTimeout deliberately zero, as a zero-valued provider would have it.
+	}
+
+	assert.Equal(t, testImageID,
+		p.resolveImageForDiscovery(context.Background(), testShape, discoveryNodeClass(testImageID)),
+		"an unset timeout must fall back to the default rather than expiring immediately")
+}
+
+// The maintainer's concern was the cost across a whole listing, not one call: shapes are walked
+// serially, so per-shape suppression alone would still pay one attempt per shape before anything
+// was suppressed. Drive makeInstanceTypes over several shapes with a failing resolver.
+func TestListing_BoundsResolutionAttemptsWhenImageAPIFails(t *testing.T) {
+	fake := &fakeImageProvider{err: assert.AnError}
+	p := &DefaultProvider{
+		shapeToPrice:            map[string]*ShapePriceInfo{},
+		preemptibleShapes:       PreemptibleShapes{},
+		discoveredCapacity:      cache.NewDiscoveredCapacity(cache.DiscoveredCapacityTTL),
+		imageProvider:           fake,
+		imageResolutionFailures: cache.NewImageResolutionFailures(cache.ImageResolutionFailureTTL),
+		imageResolutionTimeout:  50 * time.Millisecond,
+	}
+	nodeClass := &ociv1beta1.OCINodeClass{
+		Spec: ociv1beta1.OCINodeClassSpec{
+			VolumeConfig:  &ociv1beta1.VolumeConfig{BootVolumeConfig: &ociv1beta1.BootVolumeConfig{}},
+			NetworkConfig: &ociv1beta1.NetworkConfig{},
+		},
+	}
+
+	shapes := []string{
+		"VM.Standard2.1", "VM.Standard2.2", "VM.Standard2.4",
+		"VM.Standard2.8", "VM.Standard2.16", "VM.Standard3.1",
+	}
+	for _, name := range shapes {
+		sa := &ShapeAndAd{
+			Shape: &ocicore.Shape{
+				Shape: lo.ToPtr(name), IsFlexible: lo.ToPtr(false),
+				Ocpus: lo.ToPtr(float32(1)), MemoryInGBs: lo.ToPtr(float32(15)),
+				BillingType: ocicore.ShapeBillingTypePaid,
+			},
+			Ads: []string{"tenancy:PHX-AD-1"},
+		}
+		_, _ = p.makeInstanceTypes(context.Background(), sa, nodeClass, nil)
+	}
+
+	// Without the consecutive-failure breaker this would be one attempt per shape; the point is
+	// that a broken image API costs a bounded amount regardless of how many shapes exist.
+	assert.LessOrEqual(t, len(fake.gotShapes), 3,
+		"a failing image API must stop being asked, not be retried once per shape in the listing")
+	assert.NotEmpty(t, fake.gotShapes, "it must still try before giving up")
+}
+
+// Several shapes with no compatible image, scattered among healthy ones, is the normal case on a
+// mixed cluster - a GPU image that suits few shapes, say. Those must be suppressed individually
+// without tripping the global breaker, which exists for a broken API rather than for shapes that
+// legitimately have no match.
+//
+// The failing shapes must be distinct: per-shape suppression means one bad shape fails only once,
+// so repeating it would never exercise the consecutive-failure count at all.
+func TestResolveImageForDiscovery_ScatteredBadShapesDoNotSuppressTheRest(t *testing.T) {
+	fake := &fakeImageProvider{
+		imageID: testImageID,
+		failShapes: map[string]bool{
+			"VM.Unresolvable.A": true, "VM.Unresolvable.B": true,
+			"VM.Unresolvable.C": true, "VM.Unresolvable.D": true,
+		},
+	}
+	p := &DefaultProvider{
+		discoveredCapacity:      cache.NewDiscoveredCapacity(cache.DiscoveredCapacityTTL),
+		imageProvider:           fake,
+		imageResolutionFailures: cache.NewImageResolutionFailures(cache.ImageResolutionFailureTTL),
+	}
+	nc := discoveryNodeClass(testImageID)
+	ctx := context.Background()
+
+	// Interleaved as a listing would walk them. More failures than the breaker's limit, but each
+	// is followed by a success, so the run never reaches it.
+	for _, bad := range []string{"VM.Unresolvable.A", "VM.Unresolvable.B", "VM.Unresolvable.C", "VM.Unresolvable.D"} {
+		assert.Equal(t, "", p.resolveImageForDiscovery(ctx, bad, nc))
+		assert.Equal(t, testImageID, p.resolveImageForDiscovery(ctx, "VM.Standard.E5.Flex", nc),
+			"a healthy shape must keep resolving despite unresolvable ones beside it")
+	}
+
+	assert.Equal(t, testImageID, p.resolveImageForDiscovery(ctx, "VM.Standard.A1.Flex", nc),
+		"a shape not yet seen must not be suppressed either")
 }

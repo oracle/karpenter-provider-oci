@@ -50,6 +50,16 @@ const (
 	DiscoveredCapacityTTL = 60 * 24 * time.Hour
 	// DiscoveredCapacityCleanupInterval triggers cleanup of the discovered-capacity cache.
 	DiscoveredCapacityCleanupInterval = time.Hour
+
+	// ImageResolutionTimeout bounds a single image resolution attempted while listing instance
+	// types. Discovery is an optimisation over the modelled estimate, so a slow image API must
+	// degrade the model rather than hold up scheduling.
+	ImageResolutionTimeout = 5 * time.Second
+	// ImageResolutionFailureTTL is how long a failed resolution suppresses further attempts for
+	// the same shape. Failed loads are not cached by the image provider, so without this a broken
+	// or expired lookup is retried for every shape on every listing. It is deliberately short:
+	// the cost of waiting is only that discovery stays off a little longer once the API recovers.
+	ImageResolutionFailureTTL = 30 * time.Second
 )
 
 type LoaderFunc[T any] func(ctx context.Context, key string) (T, error)

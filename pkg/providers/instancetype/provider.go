@@ -102,7 +102,11 @@ type DefaultProvider struct {
 	unavailableOfferings          *cache.UnavailableOfferings
 	discoveredCapacity            *cache.DiscoveredCapacity
 	imageProvider                 image.Provider
-	vmMemoryOverhead              VMMemoryOverheadConfig
+	imageResolutionFailures       *cache.ImageResolutionFailures
+	// imageResolutionTimeout bounds one resolution attempt. A field rather than the constant so
+	// tests can shorten it; production always takes cache.ImageResolutionTimeout.
+	imageResolutionTimeout time.Duration
+	vmMemoryOverhead       VMMemoryOverheadConfig
 
 	lock sync.RWMutex
 }
@@ -144,6 +148,8 @@ func New(ctx context.Context,
 		unavailableOfferings:          unavailableOfferings,
 		discoveredCapacity:            discoveredCapacity,
 		imageProvider:                 imageProvider,
+		imageResolutionFailures:       cache.NewImageResolutionFailures(cache.ImageResolutionFailureTTL),
+		imageResolutionTimeout:        cache.ImageResolutionTimeout,
 		vmMemoryOverhead:              vmMemoryOverhead,
 	}
 
