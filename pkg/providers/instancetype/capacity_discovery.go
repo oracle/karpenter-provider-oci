@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/mitchellh/hashstructure/v2"
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/cache"
 	v1 "k8s.io/api/core/v1"
@@ -82,10 +83,17 @@ func (p *DefaultProvider) resolveImageForDiscovery(ctx context.Context, shape st
 		return ""
 	}
 
-	// A recent failure for this shape suppresses further attempts. The image provider does not
-	// cache failed loads, so without this a broken or expired lookup is retried for every shape on
-	// every listing, each with its own retries, while this call tree holds the provider read lock.
-	if p.imageResolutionFailures.RecentlyFailed(shape) {
+	// Suppression is keyed by shape and image configuration together, because resolution depends on
+	// both: it picks whichever of this NodeClass's images is compatible with this shape. A failure
+	// means "none of these images cover this shape", which is specific to the pair. Keying on the
+	// shape alone would let one NodeClass's ARM-only filter suppress a different NodeClass whose
+	// x86 images resolve that shape perfectly well.
+	//
+	// The image provider does not cache failed loads, so without this a broken or expired lookup is
+	// retried for every shape on every listing, each with its own retries, while this call tree
+	// holds the provider read lock.
+	failureKey := imageResolutionFailureKey(shape, nodeClass.Spec.VolumeConfig.BootVolumeConfig.ImageConfig)
+	if p.imageResolutionFailures.RecentlyFailed(failureKey) {
 		return ""
 	}
 
@@ -101,7 +109,7 @@ func (p *DefaultProvider) resolveImageForDiscovery(ctx context.Context, shape st
 	resolved, err := p.imageProvider.ResolveImageForShape(ctx,
 		nodeClass.Spec.VolumeConfig.BootVolumeConfig.ImageConfig, shape)
 	if err != nil || resolved == nil || len(resolved.Images) == 0 || resolved.Images[0].Id == nil {
-		p.imageResolutionFailures.RecordFailure(shape)
+		p.imageResolutionFailures.RecordFailure(failureKey)
 		log.FromContext(ctx).V(1).Info("skipping discovered capacity: cannot resolve image for shape",
 			"shape", shape, "suppressing-for", cache.ImageResolutionFailureTTL)
 		return ""
@@ -110,6 +118,17 @@ func (p *DefaultProvider) resolveImageForDiscovery(ctx context.Context, shape st
 	p.imageResolutionFailures.RecordSuccess()
 
 	return *resolved.Images[0].Id
+}
+
+// imageResolutionFailureKey identifies a resolution attempt by the two things it depends on: the
+// shape, and the NodeClass image configuration the candidate images come from.
+//
+// Hashing the configuration rather than naming it keeps NodeClasses that share an image policy on
+// one entry - they will resolve identically - while separating those that do not.
+func imageResolutionFailureKey(shape string, imageCfg *ociv1beta1.ImageConfig) string {
+	hash, _ := hashstructure.Hash(imageCfg, hashstructure.FormatV2, &hashstructure.HashOptions{})
+
+	return fmt.Sprintf("%s-%016x", shape, hash)
 }
 
 // applyDiscoveredCapacity overrides an instance type's modelled memory with a value measured on a

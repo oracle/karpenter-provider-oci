@@ -43,6 +43,9 @@ type fakeImageProvider struct {
 	// failShapes, when set, fails only for those shapes and succeeds for the rest, modelling one
 	// shape with no compatible image among healthy ones.
 	failShapes map[string]bool
+	// failConfigs fails for NodeClasses whose configured imageId is listed, modelling an image
+	// policy that does not cover the shape being asked about.
+	failConfigs map[string]bool
 	// gotShapes records what resolution was asked for, so passing the wrong identifier - the
 	// instance type name instead of the shape, say - cannot pass unnoticed.
 	gotShapes []string
@@ -52,9 +55,12 @@ func (f *fakeImageProvider) ResolveImages(context.Context, *ociv1beta1.ImageConf
 	return f.resolve()
 }
 
-func (f *fakeImageProvider) ResolveImageForShape(ctx context.Context, _ *ociv1beta1.ImageConfig,
+func (f *fakeImageProvider) ResolveImageForShape(ctx context.Context, cfg *ociv1beta1.ImageConfig,
 	shape string) (*image.ImageResolveResult, error) {
 	f.gotShapes = append(f.gotShapes, shape)
+	if cfg != nil && cfg.ImageId != nil && f.failConfigs[*cfg.ImageId] {
+		return nil, assert.AnError
+	}
 	if f.block != nil {
 		select {
 		case <-f.block:
@@ -73,6 +79,16 @@ func (f *fakeImageProvider) resolve() (*image.ImageResolveResult, error) {
 		return nil, f.err
 	}
 	return &image.ImageResolveResult{Images: []*ocicore.Image{{Id: lo.ToPtr(f.imageID)}}}, nil
+}
+
+// nodeClassWithImage builds a NodeClass whose image configuration is distinct, so two of them
+// represent two different image policies - an ARM-only filter and an x86 one, say.
+func nodeClassWithImage(imageID string) *ociv1beta1.OCINodeClass {
+	nc := discoveryNodeClass(imageID)
+	nc.Spec.VolumeConfig.BootVolumeConfig.ImageConfig = &ociv1beta1.ImageConfig{
+		ImageId: lo.ToPtr(imageID),
+	}
+	return nc
 }
 
 func discoveryNodeClass(imageIDs ...string) *ociv1beta1.OCINodeClass {
@@ -789,4 +805,52 @@ func TestResolveImageForDiscovery_ScatteredBadShapesDoNotSuppressTheRest(t *test
 
 	assert.Equal(t, testImageID, p.resolveImageForDiscovery(ctx, "VM.Standard.A1.Flex", nc),
 		"a shape not yet seen must not be suppressed either")
+}
+
+// Resolution depends on the shape and the NodeClass's image configuration together. A NodeClass
+// whose images do not cover a shape must not suppress a different NodeClass whose images do - that
+// one would silently fall back to the static estimate despite having a usable measurement cached.
+func TestResolveImageForDiscovery_FailureDoesNotLeakAcrossNodeClasses(t *testing.T) {
+	const shape = "VM.Standard.E5.Flex"
+
+	armOnly := nodeClassWithImage("ocid1.image.oc1..arm")
+	x86 := nodeClassWithImage("ocid1.image.oc1..x86")
+
+	// The ARM NodeClass cannot resolve this x86 shape; the x86 one can.
+	fake := &fakeImageProvider{imageID: testImageID, failConfigs: map[string]bool{"ocid1.image.oc1..arm": true}}
+	p := &DefaultProvider{
+		discoveredCapacity:      cache.NewDiscoveredCapacity(cache.DiscoveredCapacityTTL),
+		imageProvider:           fake,
+		imageResolutionFailures: cache.NewImageResolutionFailures(cache.ImageResolutionFailureTTL),
+	}
+	ctx := context.Background()
+
+	assert.Equal(t, "", p.resolveImageForDiscovery(ctx, shape, armOnly),
+		"the ARM NodeClass has no image for this shape")
+
+	assert.Equal(t, testImageID, p.resolveImageForDiscovery(ctx, shape, x86),
+		"a different NodeClass whose images do cover this shape must still resolve")
+}
+
+// Two NodeClasses sharing an image policy resolve identically, so they should share one entry
+// rather than each paying their own attempt.
+func TestResolveImageForDiscovery_SameImageConfigSharesSuppression(t *testing.T) {
+	const shape = "VM.Standard.E5.Flex"
+
+	a := nodeClassWithImage("ocid1.image.oc1..same")
+	b := nodeClassWithImage("ocid1.image.oc1..same")
+
+	fake := &fakeImageProvider{err: assert.AnError}
+	p := &DefaultProvider{
+		discoveredCapacity:      cache.NewDiscoveredCapacity(cache.DiscoveredCapacityTTL),
+		imageProvider:           fake,
+		imageResolutionFailures: cache.NewImageResolutionFailures(cache.ImageResolutionFailureTTL),
+	}
+	ctx := context.Background()
+
+	p.resolveImageForDiscovery(ctx, shape, a)
+	p.resolveImageForDiscovery(ctx, shape, b)
+
+	assert.Len(t, fake.gotShapes, 1,
+		"the same image policy must not be retried once per NodeClass that uses it")
 }
