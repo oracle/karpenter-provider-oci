@@ -9,7 +9,6 @@ Karpenter helps improve utilization and control cost in Kubernetes by:
 - **Deprovisioning** nodes once they’re no longer needed
 - **Optimizing** the node fleet over time by consolidating workloads onto fewer or more cost-effective nodes with better utilization
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/oracle/karpenter-provider-oci)](https://goreportcard.com/report/github.com/oracle/karpenter-provider-oci)
 [![License](https://img.shields.io/badge/license-UPL%201.0-blue.svg)](https://oss.oracle.com/licenses/upl/)
 [![Release](https://img.shields.io/github/v/release/oracle/karpenter-provider-oci)](https://img.shields.io/github/v/release/oracle/karpenter-provider-oci)
 [![Coverage Status](https://coveralls.io/repos/github/oracle/karpenter-provider-oci/badge.svg?branch=main)](https://coveralls.io/github/oracle/karpenter-provider-oci?branch=main)
@@ -46,6 +45,7 @@ See [Installation](docs/guide/installation.md).
   - [Ensure worker nodes using an OKE image are always updated to the latest image](docs/guide/usage.md#ensure-worker-nodes-using-an-oke-image-are-always-updated-to-the-latest-image)
   - [Maintain a fixed number of worker nodes with static capacity](docs/guide/usage.md#maintain-a-fixed-number-of-worker-nodes-with-static-capacity)
   - [Influence scheduling decisions with `NodeOverlay`](docs/guide/usage.md#influence-scheduling-decisions-with-nodeoverlay)
+  - [Pre-provision spare capacity with `CapacityBuffer`](docs/guide/usage.md#pre-provision-spare-capacity-with-capacitybuffer)
   - [Launch worker nodes for an OciIpNativeCNI cluster](docs/guide/usage.md#launch-worker-nodes-for-an-ociipnativecni-cluster)
 - [Advanced Use Cases](docs/guide/advanced-use-cases.md)
   - [Oracle Cloud Agent Plugins](docs/guide/agent-plugins.md)

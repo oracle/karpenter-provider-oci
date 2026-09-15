@@ -75,7 +75,8 @@ A Helm chart for Karpenter provider OCI
 | settings.batchMaxDuration | string | `"10s"` | The maximum length of a batch window. The longer this is, the more pods we can consider for provisioning at one time which usually results in fewer but larger nodes. |
 | settings.clusterCompartmentId | string | `""` | [required] Cluster compartment OCID. |
 | settings.enableUnavailableOfferingsOnServiceLimitExceeded | bool | `false` | When true, OCI LimitExceeded and QuotaExceeded failures mark the offering unavailable. Disabled by default. |
-| settings.featureGates | object | `{"nodeOverlay":false,"nodeRepair":false,"spotToSpotConsolidation":false,"staticCapacity":false}` | Feature Gate configuration values. Feature Gates will follow the same graduation process and requirements as feature gates in Kubernetes. More information here https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#feature-gates-for-alpha-or-beta-features |
+| settings.featureGates | object | `{"capacityBuffer":false,"nodeOverlay":false,"nodeRepair":false,"spotToSpotConsolidation":false,"staticCapacity":false}` | Feature Gate configuration values. Feature Gates will follow the same graduation process and requirements as feature gates in Kubernetes. More information here https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#feature-gates-for-alpha-or-beta-features |
+| settings.featureGates.capacityBuffer | bool | `false` | capacityBuffer is ALPHA and is disabled by default. Setting this to true will enable proactive spare-capacity provisioning through CapacityBuffer resources. |
 | settings.featureGates.nodeOverlay | bool | `false` | nodeOverlay is ALPHA and is disabled by default. Setting this to true will enable nodeOverlay. |
 | settings.featureGates.nodeRepair | bool | `false` | nodeRepair is ALPHA and is disabled by default. Setting this to true will enable node repair. |
 | settings.featureGates.spotToSpotConsolidation | bool | `false` | spotToSpotConsolidation is ALPHA and is disabled by default. Setting this to true will enable spot replacement consolidation for both single and multi-node consolidation. |
@@ -100,4 +101,3 @@ A Helm chart for Karpenter provider OCI
 | topologySpreadConstraints | list | `[{"maxSkew":1,"topologyKey":"topology.kubernetes.io/zone","whenUnsatisfiable":"DoNotSchedule"}]` | Topology spread constraints to increase the controller resilience by distributing pods across the cluster zones. If an explicit label selector is not provided one will be created from the pod selector labels. |
 | volumeMounts | list | `[]` | Additional volume mounts on the controller container. |
 | volumes | list | `[]` | Additional volumes on the controller Deployment. |
-

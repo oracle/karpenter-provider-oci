@@ -108,6 +108,13 @@ type NodeOverlayTestConfig struct {
 	PriceAdjustment string
 }
 
+type CapacityBufferTestConfig struct {
+	Name             string
+	InstanceType     string
+	BufferReplicas   int32
+	WorkloadReplicas int32
+}
+
 type StaticCapacityTestConfig struct {
 	NodePoolName    string
 	InitialReplicas int64
@@ -128,6 +135,7 @@ type KarpenterE2ETestConfig struct {
 	OCINodeClass       OCINodeClassConfig
 	TestDeployment     TestDeploymentConfig
 	NodeOverlayTest    NodeOverlayTestConfig
+	CapacityBufferTest CapacityBufferTestConfig
 	StaticCapacityTest StaticCapacityTestConfig
 	DriftTestData      DriftTestData
 	OciVcnIpNative     bool
