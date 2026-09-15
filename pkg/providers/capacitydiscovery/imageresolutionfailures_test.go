@@ -5,7 +5,7 @@
 ** Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
  */
 
-package cache
+package capacitydiscovery
 
 import (
 	"sync"
@@ -16,7 +16,7 @@ import (
 )
 
 func TestImageResolutionFailures_RecordAndQuery(t *testing.T) {
-	f := NewImageResolutionFailures(ImageResolutionFailureTTL)
+	f := newImageResolutionFailures(imageResolutionFailureTTL, imageIncompatibleTTL)
 
 	assert.False(t, f.RecentlyFailed("VM.Standard.E5.Flex"), "nothing has failed yet")
 
@@ -27,7 +27,7 @@ func TestImageResolutionFailures_RecordAndQuery(t *testing.T) {
 // Suppression is per shape: one shape with no compatible image must not stop discovery for every
 // other shape in the listing.
 func TestImageResolutionFailures_ScopedToShape(t *testing.T) {
-	f := NewImageResolutionFailures(ImageResolutionFailureTTL)
+	f := newImageResolutionFailures(imageResolutionFailureTTL, imageIncompatibleTTL)
 
 	f.RecordFailure("VM.Standard.E5.Flex")
 
@@ -37,7 +37,7 @@ func TestImageResolutionFailures_ScopedToShape(t *testing.T) {
 
 // Suppression must lift on its own, or one outage would disable discovery until a restart.
 func TestImageResolutionFailures_Expires(t *testing.T) {
-	f := NewImageResolutionFailures(80 * time.Millisecond)
+	f := newImageResolutionFailures(80*time.Millisecond, imageIncompatibleTTL)
 
 	f.RecordFailure("VM.Standard.E5.Flex")
 	assert.True(t, f.RecentlyFailed("VM.Standard.E5.Flex"))
@@ -51,7 +51,7 @@ func TestImageResolutionFailures_Expires(t *testing.T) {
 // rate rather than on every listing.
 func TestImageResolutionFailures_RepeatedFailureExtendsSuppression(t *testing.T) {
 	const ttl = 200 * time.Millisecond
-	f := NewImageResolutionFailures(ttl)
+	f := newImageResolutionFailures(ttl, imageIncompatibleTTL)
 
 	f.RecordFailure("VM.Standard.E5.Flex") // suppressed until t=200ms
 	time.Sleep(120 * time.Millisecond)
@@ -63,7 +63,7 @@ func TestImageResolutionFailures_RepeatedFailureExtendsSuppression(t *testing.T)
 
 func TestImageResolutionFailures_NonPositiveTTLFallsBack(t *testing.T) {
 	for _, ttl := range []time.Duration{0, -time.Second} {
-		f := NewImageResolutionFailures(ttl)
+		f := newImageResolutionFailures(ttl, imageIncompatibleTTL)
 		f.RecordFailure("VM.Standard.E5.Flex")
 
 		assert.True(t, f.RecentlyFailed("VM.Standard.E5.Flex"),
@@ -74,7 +74,7 @@ func TestImageResolutionFailures_NonPositiveTTLFallsBack(t *testing.T) {
 // The provider holds this by pointer; a nil one must behave as "nothing has failed" rather than
 // panicking on the scheduling path.
 func TestImageResolutionFailures_NilIsSafe(t *testing.T) {
-	var f *ImageResolutionFailures
+	var f *imageResolutionFailures
 
 	assert.NotPanics(t, func() { f.RecordFailure("VM.Standard.E5.Flex") })
 	assert.False(t, f.RecentlyFailed("VM.Standard.E5.Flex"))
@@ -84,7 +84,7 @@ func TestImageResolutionFailures_NilIsSafe(t *testing.T) {
 // the first pass pays one attempt per shape before any is suppressed. Consecutive failures across
 // different shapes mean the API is unwell, so everything is suppressed together.
 func TestImageResolutionFailures_GlobalAfterConsecutiveFailures(t *testing.T) {
-	f := NewImageResolutionFailures(ImageResolutionFailureTTL)
+	f := newImageResolutionFailures(imageResolutionFailureTTL, imageIncompatibleTTL)
 
 	for _, shape := range []string{"shape-a", "shape-b"} {
 		f.RecordFailure(shape)
@@ -101,7 +101,7 @@ func TestImageResolutionFailures_GlobalAfterConsecutiveFailures(t *testing.T) {
 // A shape that genuinely has no compatible image must not, on its own, disable discovery for the
 // healthy shapes around it.
 func TestImageResolutionFailures_SuccessResetsTheRun(t *testing.T) {
-	f := NewImageResolutionFailures(ImageResolutionFailureTTL)
+	f := newImageResolutionFailures(imageResolutionFailureTTL, imageIncompatibleTTL)
 
 	f.RecordFailure("unresolvable")
 	f.RecordSuccess()
@@ -115,7 +115,7 @@ func TestImageResolutionFailures_SuccessResetsTheRun(t *testing.T) {
 }
 
 func TestImageResolutionFailures_GlobalSuppressionExpires(t *testing.T) {
-	f := NewImageResolutionFailures(80 * time.Millisecond)
+	f := newImageResolutionFailures(80*time.Millisecond, imageIncompatibleTTL)
 
 	for i := 0; i < consecutiveFailureLimit; i++ {
 		f.RecordFailure("shape-a")
@@ -128,7 +128,7 @@ func TestImageResolutionFailures_GlobalSuppressionExpires(t *testing.T) {
 }
 
 func TestImageResolutionFailures_ConcurrentUse(t *testing.T) {
-	f := NewImageResolutionFailures(ImageResolutionFailureTTL)
+	f := newImageResolutionFailures(imageResolutionFailureTTL, imageIncompatibleTTL)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {

@@ -9,13 +9,13 @@ package capacitydiscovery
 
 import (
 	"context"
+	discovery "github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	"testing"
 
 	"github.com/awslabs/operatorpkg/object"
 	"github.com/awslabs/operatorpkg/status"
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/fakes"
-	"github.com/oracle/karpenter-provider-oci/pkg/providers/instancetype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
@@ -46,14 +46,14 @@ type recordingProvider struct {
 	err        error
 }
 
-func (r *recordingProvider) UpdateInstanceTypeCapacityFromNode(_ context.Context, node *v1.Node,
+func (r *recordingProvider) RecordNodeCapacity(_ context.Context, node *v1.Node,
 	nodeClaim *karpv1.NodeClaim) error {
 	r.nodes = append(r.nodes, node)
 	r.nodeClaims = append(r.nodeClaims, nodeClaim)
 	return r.err
 }
 
-func (r *recordingProvider) DiscoveryEnabled() bool { return true }
+func (r *recordingProvider) Enabled() bool { return true }
 
 func testCloudProvider() cloudprovider.CloudProvider {
 	return &fakes.FakeCloudProvider{
@@ -170,7 +170,7 @@ func TestReconcile_SkipsNodeWithoutNodeClaim(t *testing.T) {
 // A node that registered before publishing its memory would never be revisited, because the watch
 // only fires on the transition into the registered state. It must be requeued instead.
 func TestReconcile_RequeuesWhenCapacityNotReported(t *testing.T) {
-	p := &recordingProvider{err: instancetype.ErrCapacityNotReported}
+	p := &recordingProvider{err: discovery.ErrCapacityNotReported}
 	c, node := newTestController(t, p, nodeClaimFor(managedNode("")))
 
 	res, err := c.Reconcile(context.Background(), node)

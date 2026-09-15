@@ -10,6 +10,7 @@ package options
 import (
 	"context"
 	"flag"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	"math"
 	"os"
 	"regexp"
@@ -20,7 +21,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
-	"github.com/oracle/karpenter-provider-oci/pkg/cache"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/instancetype"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/network"
 	"github.com/samber/lo"
@@ -365,7 +365,7 @@ func TestDiscoveredNodeCapacityTTLOption(t *testing.T) {
 		fs := &options.FlagSet{FlagSet: flag.NewFlagSet("test", flag.ContinueOnError)}
 		opts.AddFlags(fs)
 
-		g.Expect(opts.DiscoveredNodeCapacityTTLHours).To(Equal(int(cache.DiscoveredCapacityTTL.Hours())))
+		g.Expect(opts.DiscoveredNodeCapacityTTLHours).To(Equal(int(capacitydiscovery.DefaultNodeCapacityTTL.Hours())))
 	})
 
 	t.Run("chart default matches the flag default", func(t *testing.T) {
@@ -382,7 +382,7 @@ func TestDiscoveredNodeCapacityTTLOption(t *testing.T) {
 		g.Expect(yaml.Unmarshal(raw, &values)).To(Succeed())
 		g.Expect(values.Settings.DiscoveredNodeCapacityTTLHours).ToNot(BeNil(),
 			"chart/values.yaml must set settings.discoveredNodeCapacityTTLHours")
-		g.Expect(*values.Settings.DiscoveredNodeCapacityTTLHours).To(Equal(int(cache.DiscoveredCapacityTTL.Hours())))
+		g.Expect(*values.Settings.DiscoveredNodeCapacityTTLHours).To(Equal(int(capacitydiscovery.DefaultNodeCapacityTTL.Hours())))
 	})
 
 	t.Run("chart env var name matches the flag name", func(t *testing.T) {

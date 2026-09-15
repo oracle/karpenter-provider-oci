@@ -328,6 +328,19 @@ Defaults are `600` MiB plus `19` MiB per GiB, which on a 32 GB shape reserves ab
 - **The cache is in memory**, so measurements are relearned after a controller restart or leader change. Nodes still running are re-read at startup, so in practice it repopulates from the live fleet.
 - **Entries expire**, after 60 days by default and sooner if `discoveredNodeCapacityTTLHours` is lowered. Observing the same or a smaller value refreshes the entry, so a combination in active use does not expire; a larger observation is ignored and does not refresh it. Expiry matters because smallest-wins means a value can never recover upward on its own, and because a host change can alter what a shape presents without anything else invalidating the entry.
 
+**Observability.** `karpenter_cloudprovider_capacity_discovery_advice_count` records every time modelling consulted a measurement, labelled by `outcome`. Most outcomes are ordinary rather than faults, so they are not logged as errors:
+
+| `outcome` | meaning |
+|---|---|
+| `applied` | a measurement was found and used in place of the estimate |
+| `no_measurement` | nothing of this kind has registered yet, or what did has expired |
+| `no_image` | this NodeClass configures no image for this shape, so there is nothing to key a measurement on |
+| `suppressed` | a recent outcome for this shape and image configuration still stands, so no attempt was made |
+| `resolution_failed` | the image service could not answer — the one outcome worth alerting on |
+| `disabled` | capacity discovery is switched off |
+
+Only `applied` changes what is modelled; every other outcome leaves the estimate in place, so none of them can fail a launch. Of those, only `resolution_failed` indicates something is wrong.
+
 **Configuration.** The two are configured independently, and either can be switched off on its own.
 
 The estimate used before anything is measured:

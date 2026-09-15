@@ -21,6 +21,7 @@ import (
 
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/cache"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/instancetype"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/network"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -135,7 +136,7 @@ Example in a JSON format:
 		"How long, in seconds, an offering observed to be out of host capacity is treated as "+
 			"unavailable before Karpenter retries it. Set to 0 to disable the unavailable-offerings cache")
 	fs.IntVar(&o.DiscoveredNodeCapacityTTLHours, "discovered-node-capacity-ttl-hours",
-		int(cache.DiscoveredCapacityTTL.Hours()),
+		int(capacitydiscovery.DefaultNodeCapacityTTL.Hours()),
 		"How long, in hours, memory capacity measured on a registered node is reused when modelling "+
 			"later launches of the same instance type and image. Set to 0 to disable capacity "+
 			"discovery: the node-watching controller is not started, no image is resolved while "+

@@ -18,6 +18,7 @@ import (
 	"github.com/oracle/karpenter-provider-oci/pkg/oci"
 	"github.com/oracle/karpenter-provider-oci/pkg/operator/options"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/blockstorage"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacityreservation"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/clusterplacementgroup"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/computecluster"
@@ -54,7 +55,7 @@ type Operator struct {
 
 	InstanceProvider              instance.Provider
 	InstanceTypeProvider          instancetype.Provider
-	CapacityDiscoveryProvider     instancetype.CapacityDiscoveryProvider
+	CapacityDiscoveryProvider     capacitydiscovery.Provider
 	PlacementProvider             placement.Provider
 	NetworkProvider               network.Provider
 	CapacityReservationProvider   capacityreservation.Provider
@@ -134,13 +135,15 @@ func createOperator(ctx context.Context, coreOp *operator.Operator,
 	unavailableOfferings := cache.NewUnavailableOfferings(
 		time.Duration(ociOptions.UnavailableOfferingsTTLSeconds) * time.Second)
 
-	// memory measured on registered nodes, reused for later launches of the same instance type
-	// and image so a too-optimistic estimate cannot drive an unbounded launch loop.
-	discoveredCapacity := cache.NewDiscoveredCapacity(
-		time.Duration(ociOptions.DiscoveredNodeCapacityTTLHours) * time.Hour)
-
 	imageProvider := lo.Must(image.NewProvider(ctx, clientSet, ociClient,
 		ociOptions.PreBakedImageCompartmentId, "", coreOp.Elected()))
+
+	// Learns the memory registered nodes actually report and offers it back for later launches of
+	// the same instance type and image, so a too-optimistic estimate cannot drive an unbounded
+	// launch loop. One provider serves both sides: it advises the instance type provider while
+	// modelling, and the controller below records what it observes. A TTL of zero switches it off.
+	capacityDiscoveryProvider := capacitydiscovery.New(imageProvider,
+		time.Duration(ociOptions.DiscoveredNodeCapacityTTLHours)*time.Hour)
 
 	instanceTypeProvider := lo.Must(instancetype.New(ctx, region, ociOptions.ClusterCompartmentId,
 		ociClient, identityProvider, clientSet, coreOp.GetAPIReader(),
@@ -148,8 +151,7 @@ func createOperator(ctx context.Context, coreOp *operator.Operator,
 		shapeMetaFile, refreshInterval, ociOptions.GlobalShapeConfigs,
 		ociOptions.IpFamiliesFlag.IpFamilies,
 		unavailableOfferings,
-		discoveredCapacity,
-		imageProvider,
+		capacityDiscoveryProvider,
 		ociOptions.VMMemoryOverhead(),
 		coreOp.Elected()))
 
@@ -183,7 +185,7 @@ func createOperator(ctx context.Context, coreOp *operator.Operator,
 		InstanceProvider:              instanceProvider,
 		PlacementProvider:             placementProvider,
 		InstanceTypeProvider:          instanceTypeProvider,
-		CapacityDiscoveryProvider:     instanceTypeProvider,
+		CapacityDiscoveryProvider:     capacityDiscoveryProvider,
 		ImageProvider:                 imageProvider,
 		NetworkProvider:               networkProvider,
 		KmsKeyProvider:                kmsKeyProvider,

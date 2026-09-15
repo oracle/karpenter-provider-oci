@@ -5,7 +5,7 @@
 ** Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
  */
 
-package cache
+package capacitydiscovery
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// DiscoveredCapacity stores memory capacity actually observed on registered nodes, so that later
+// nodeCapacity stores memory capacity actually observed on registered nodes, so that later
 // launches of the same instance type and image are modelled from measurement rather than estimate.
 //
 // Karpenter must predict a node's capacity before the node exists. When that prediction is too
@@ -27,7 +27,7 @@ import (
 // of a given combination.
 //
 // Entries are keyed by caller-supplied strings; see instancetype for the key scheme.
-type DiscoveredCapacity struct {
+type nodeCapacity struct {
 	cache *cache.Cache
 	// mu makes the read-compare-write in Record atomic. The underlying cache is already safe for
 	// concurrent access, but smallest-wins is an invariant across two operations: without this,
@@ -38,28 +38,28 @@ type DiscoveredCapacity struct {
 	disabled bool
 }
 
-// NewDiscoveredCapacity creates the cache with the given entry TTL. A ttl of 0 disables discovery
-// entirely; a negative ttl is treated as invalid and falls back to DiscoveredCapacityTTL.
-func NewDiscoveredCapacity(ttl time.Duration) *DiscoveredCapacity {
+// newNodeCapacity creates the cache with the given entry TTL. A ttl of 0 disables discovery
+// entirely; a negative ttl is treated as invalid and falls back to DefaultNodeCapacityTTL.
+func newNodeCapacity(ttl time.Duration) *nodeCapacity {
 	if ttl == 0 {
-		return &DiscoveredCapacity{disabled: true}
+		return &nodeCapacity{disabled: true}
 	}
 	if ttl < 0 {
-		ttl = DiscoveredCapacityTTL
+		ttl = DefaultNodeCapacityTTL
 	}
-	return &DiscoveredCapacity{
-		cache: cache.New(ttl, DiscoveredCapacityCleanupInterval),
+	return &nodeCapacity{
+		cache: cache.New(ttl, nodeCapacityCleanupInterval),
 	}
 }
 
 // Enabled reports whether capacity discovery is switched on. Callers use it to skip the work of
 // establishing a key at all, not merely the lookup: resolving an image is the expensive part.
-func (d *DiscoveredCapacity) Enabled() bool {
+func (d *nodeCapacity) Enabled() bool {
 	return d != nil && !d.disabled
 }
 
 // Get returns the memory capacity observed for key, if one has been recorded.
-func (d *DiscoveredCapacity) Get(key string) (resource.Quantity, bool) {
+func (d *nodeCapacity) Get(key string) (resource.Quantity, bool) {
 	if d.disabled {
 		return resource.Quantity{}, false
 	}
@@ -79,7 +79,7 @@ func (d *DiscoveredCapacity) Get(key string) (resource.Quantity, bool) {
 //
 // Re-recording an equal value refreshes the TTL, so a combination still in active use does not
 // expire and force a re-measurement.
-func (d *DiscoveredCapacity) Record(ctx context.Context, key string, observed resource.Quantity) {
+func (d *nodeCapacity) Record(ctx context.Context, key string, observed resource.Quantity) {
 	if d.disabled {
 		return
 	}

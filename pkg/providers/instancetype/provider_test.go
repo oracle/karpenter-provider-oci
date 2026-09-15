@@ -10,6 +10,7 @@ package instancetype
 import (
 	"context"
 	"errors"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	"os"
 	"path/filepath"
 	"strings"
@@ -707,7 +708,7 @@ func TestCalculatePricesAndOfferings(t *testing.T) {
 	}
 	// decorate -> should add on-demand offerings (available) and spot offerings since not burstable and preemptible
 	err := p.decorateInstanceType(context.Background(), it, nc, sa,
-		[]v1.Taint{preemptibleTaintNoSchedule}, "")
+		[]v1.Taint{preemptibleTaintNoSchedule}, capacitydiscovery.NoAdvice())
 	require.NoError(t, err)
 	// We expect at least the on-demand offerings for both ads and spot offerings for both ads
 	var onDemand, spot int
@@ -793,7 +794,7 @@ func TestDecorateInstanceType_DoesNotDeadlock(t *testing.T) {
 	decorateDone := make(chan error, 1)
 	go func() {
 		decorateDone <- p.decorateInstanceType(context.Background(), instanceType, nodeClass, shapeAndAd,
-			[]v1.Taint{preemptibleTaintNoSchedule}, "")
+			[]v1.Taint{preemptibleTaintNoSchedule}, capacitydiscovery.NoAdvice())
 	}()
 
 	select {
@@ -3148,11 +3149,11 @@ func TestDecorateInstanceType_AppliesConfiguredOverhead(t *testing.T) {
 
 	configured := newInstanceType()
 	_ = newProvider(defaultVMMemoryOverhead).decorateInstanceType(
-		context.Background(), configured, nodeClass, shapeAndAd, nil, "")
+		context.Background(), configured, nodeClass, shapeAndAd, nil, capacitydiscovery.NoAdvice())
 
 	disabled := newInstanceType()
 	_ = newProvider(VMMemoryOverheadConfig{}).decorateInstanceType(
-		context.Background(), disabled, nodeClass, shapeAndAd, nil, "")
+		context.Background(), disabled, nodeClass, shapeAndAd, nil, capacitydiscovery.NoAdvice())
 
 	assert.Equal(t, declared, disabled.Capacity.Memory().Value(),
 		"a zero overhead must leave declared memory untouched")

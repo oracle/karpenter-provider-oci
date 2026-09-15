@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/awslabs/operatorpkg/reasonable"
-	"github.com/oracle/karpenter-provider-oci/pkg/providers/instancetype"
+	discovery "github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	v1 "k8s.io/api/core/v1"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -44,11 +44,11 @@ const capacityNotReportedRequeue = 15 * time.Second
 type Controller struct {
 	kubeClient       client.Client
 	cloudProvider    cloudprovider.CloudProvider
-	capacityProvider instancetype.CapacityDiscoveryProvider
+	capacityProvider discovery.Recorder
 }
 
 func NewController(kubeClient client.Client, cloudProvider cloudprovider.CloudProvider,
-	capacityProvider instancetype.CapacityDiscoveryProvider) *Controller {
+	capacityProvider discovery.Recorder) *Controller {
 	return &Controller{
 		kubeClient:       kubeClient,
 		cloudProvider:    cloudProvider,
@@ -81,8 +81,8 @@ func (c *Controller) Reconcile(ctx context.Context, node *v1.Node) (reconcile.Re
 	// the OCINodeClass is not consulted. Not reading it saves an API call for every registered
 	// node, and stops a NodeClass that has since been deleted or renamed from discarding an
 	// otherwise valid observation.
-	if err := c.capacityProvider.UpdateInstanceTypeCapacityFromNode(ctx, node, nodeClaim); err != nil {
-		if errors.Is(err, instancetype.ErrCapacityNotReported) {
+	if err := c.capacityProvider.RecordNodeCapacity(ctx, node, nodeClaim); err != nil {
+		if errors.Is(err, discovery.ErrCapacityNotReported) {
 			// The node registered before publishing its memory. We only watch the transition into
 			// the registered state, so without an explicit requeue this node would never be
 			// revisited and its measurement would be lost.

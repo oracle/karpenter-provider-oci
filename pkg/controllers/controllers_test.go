@@ -93,9 +93,9 @@ var _ = Describe("OCINodeClass Reconciler", func() {
 // test does not exercise; it only needs NewControllers to wire something in.
 type fakeCapacityProvider struct{ enabled bool }
 
-func (f *fakeCapacityProvider) DiscoveryEnabled() bool { return f.enabled }
+func (f *fakeCapacityProvider) Enabled() bool { return f.enabled }
 
-func (f *fakeCapacityProvider) UpdateInstanceTypeCapacityFromNode(_ context.Context, _ *corev1.Node,
+func (f *fakeCapacityProvider) RecordNodeCapacity(_ context.Context, _ *corev1.Node,
 	_ *karpv1.NodeClaim) error {
 	return nil
 }

@@ -5,7 +5,7 @@
 ** Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
  */
 
-package cache
+package capacitydiscovery
 
 import (
 	"context"
@@ -21,7 +21,7 @@ import (
 func mib(v string) resource.Quantity { return resource.MustParse(v) }
 
 func TestDiscoveredCapacity_RecordAndGet(t *testing.T) {
-	d := NewDiscoveredCapacity(DiscoveredCapacityTTL)
+	d := newNodeCapacity(DefaultNodeCapacityTTL)
 
 	_, ok := d.Get("absent")
 	assert.False(t, ok, "an unrecorded key must not report a value")
@@ -51,7 +51,7 @@ func TestDiscoveredCapacity_SmallestObservationWins(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := NewDiscoveredCapacity(DiscoveredCapacityTTL)
+			d := newNodeCapacity(DefaultNodeCapacityTTL)
 			for _, o := range tt.observed {
 				d.Record(context.Background(), "k", mib(o))
 			}
@@ -66,7 +66,7 @@ func TestDiscoveredCapacity_SmallestObservationWins(t *testing.T) {
 
 // Smallest-wins is a read-compare-write, so it only holds if the whole sequence is atomic.
 func TestDiscoveredCapacity_RecordIsAtomic(t *testing.T) {
-	d := NewDiscoveredCapacity(DiscoveredCapacityTTL)
+	d := newNodeCapacity(DefaultNodeCapacityTTL)
 	ctx := context.Background()
 	small, large := mib("30800Mi"), mib("31000Mi")
 
@@ -92,7 +92,7 @@ func TestDiscoveredCapacity_RecordIsAtomic(t *testing.T) {
 // next iteration would simply insert it again, and the assertion would pass regardless.
 func TestDiscoveredCapacity_EqualObservationRefreshesTTL(t *testing.T) {
 	const ttl = 200 * time.Millisecond
-	d := NewDiscoveredCapacity(ttl)
+	d := newNodeCapacity(ttl)
 	ctx := context.Background()
 	mem := mib("30890Mi")
 
@@ -106,7 +106,7 @@ func TestDiscoveredCapacity_EqualObservationRefreshesTTL(t *testing.T) {
 }
 
 func TestDiscoveredCapacity_Expiry(t *testing.T) {
-	d := NewDiscoveredCapacity(80 * time.Millisecond)
+	d := newNodeCapacity(80 * time.Millisecond)
 	d.Record(context.Background(), "k", mib("30890Mi"))
 
 	_, ok := d.Get("k")
@@ -120,7 +120,7 @@ func TestDiscoveredCapacity_Expiry(t *testing.T) {
 // A zero TTL is the documented way to switch the feature off, so it must record nothing, report
 // nothing and answer Enabled() honestly - callers use that to skip the work entirely.
 func TestDiscoveredCapacity_Disabled(t *testing.T) {
-	d := NewDiscoveredCapacity(0)
+	d := newNodeCapacity(0)
 
 	assert.False(t, d.Enabled())
 
@@ -130,11 +130,11 @@ func TestDiscoveredCapacity_Disabled(t *testing.T) {
 }
 
 // A negative TTL is nonsense rather than a request to disable; treating it as "off" would silently
-// turn the feature off for a typo. It falls back to DiscoveredCapacityTTL, which this asserts only
+// turn the feature off for a typo. It falls back to DefaultNodeCapacityTTL, which this asserts only
 // as "still enabled and retaining" - pinning the exact duration would mean either exposing the
 // field or waiting out a 60-day TTL.
 func TestDiscoveredCapacity_NegativeTTLDoesNotDisable(t *testing.T) {
-	d := NewDiscoveredCapacity(-1 * time.Hour)
+	d := newNodeCapacity(-1 * time.Hour)
 
 	assert.True(t, d.Enabled(), "a negative TTL must not disable the cache")
 
@@ -144,16 +144,16 @@ func TestDiscoveredCapacity_NegativeTTLDoesNotDisable(t *testing.T) {
 }
 
 func TestDiscoveredCapacity_Enabled(t *testing.T) {
-	assert.True(t, NewDiscoveredCapacity(DiscoveredCapacityTTL).Enabled())
-	assert.False(t, NewDiscoveredCapacity(0).Enabled())
+	assert.True(t, newNodeCapacity(DefaultNodeCapacityTTL).Enabled())
+	assert.False(t, newNodeCapacity(0).Enabled())
 
-	var nilCache *DiscoveredCapacity
+	var nilCache *nodeCapacity
 	assert.False(t, nilCache.Enabled(), "a nil cache must be safe to ask")
 }
 
 // Keys are opaque to the cache; entries must not bleed between them.
 func TestDiscoveredCapacity_KeysAreIndependent(t *testing.T) {
-	d := NewDiscoveredCapacity(DiscoveredCapacityTTL)
+	d := newNodeCapacity(DefaultNodeCapacityTTL)
 	ctx := context.Background()
 
 	d.Record(ctx, "a", mib("30800Mi"))

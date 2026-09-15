@@ -29,37 +29,6 @@ const (
 	UnavailableOfferingsTTL = 3 * time.Minute
 	// UnavailableOfferingsCleanupInterval triggers cleanup of the unavailable-offerings cache.
 	UnavailableOfferingsCleanupInterval = time.Minute
-
-	// DiscoveredCapacityTTL is how long a memory capacity measured on a real node is reused for
-	// later launches of the same instance type and image.
-	//
-	// It is long because the value is close to a property of the shape and image rather than of
-	// the moment. It expires at all for three reasons:
-	//
-	//   - Recording keeps the smallest value seen, so an entry can never recover upward. One
-	//     unusually small node would otherwise suppress that combination's capacity permanently,
-	//     with no path back. Expiry is what allows it to be re-learned.
-	//   - The key includes the image, so entries for an image that is no longer selected are never
-	//     read again rather than being overwritten. Without expiry those orphans accumulate for
-	//     the lifetime of the process.
-	//   - A host firmware or hypervisor change can alter what a shape presents to the guest
-	//     without changing anything in the key, so nothing else would invalidate the entry.
-	//
-	// Set the TTL to zero to disable capacity discovery entirely; see
-	// --discovered-node-capacity-ttl-hours.
-	DiscoveredCapacityTTL = 60 * 24 * time.Hour
-	// DiscoveredCapacityCleanupInterval triggers cleanup of the discovered-capacity cache.
-	DiscoveredCapacityCleanupInterval = time.Hour
-
-	// ImageResolutionTimeout bounds a single image resolution attempted while listing instance
-	// types. Discovery is an optimisation over the modelled estimate, so a slow image API must
-	// degrade the model rather than hold up scheduling.
-	ImageResolutionTimeout = 5 * time.Second
-	// ImageResolutionFailureTTL is how long a failed resolution suppresses further attempts for
-	// the same shape. Failed loads are not cached by the image provider, so without this a broken
-	// or expired lookup is retried for every shape on every listing. It is deliberately short:
-	// the cost of waiting is only that discovery stays off a little longer once the API recovers.
-	ImageResolutionFailureTTL = 30 * time.Second
 )
 
 type LoaderFunc[T any] func(ctx context.Context, key string) (T, error)

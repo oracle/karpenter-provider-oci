@@ -5,7 +5,7 @@
 ** Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
  */
 
-package cache
+package capacitydiscovery
 
 import (
 	"sync"
@@ -14,7 +14,7 @@ import (
 	"github.com/patrickmn/go-cache"
 )
 
-// ImageResolutionFailures remembers shapes whose image could not be resolved, so a failing lookup
+// imageResolutionFailures remembers shapes whose image could not be resolved, so a failing lookup
 // is attempted once per TTL rather than once per shape on every instance type listing.
 //
 // The image provider caches successful lookups but not failures, so during an outage every listing
@@ -26,7 +26,7 @@ import (
 // The TTL is deliberately short. The only cost of a stale entry is that discovery stays switched
 // off slightly longer than necessary after the API recovers, during which launches are modelled
 // from the estimate exactly as they were before any of this existed.
-type ImageResolutionFailures struct {
+type imageResolutionFailures struct {
 	cache *cache.Cache
 
 	// Per-key suppression alone does not bound a broken image API: a listing walks every shape, so
@@ -41,21 +41,32 @@ type ImageResolutionFailures struct {
 	consecutiveFailures int
 	globalUntil         time.Time
 	ttl                 time.Duration
+	// incompatibleTTL is the longer window used for settled answers; see RecordIncompatible.
+	incompatibleTTL time.Duration
 }
 
 // consecutiveFailureLimit is how many service failures in a row, across any keys, are tolerated
 // before resolution is suppressed wholesale.
 const consecutiveFailureLimit = 3
 
-func NewImageResolutionFailures(ttl time.Duration) *ImageResolutionFailures {
+func newImageResolutionFailures(ttl, incompatibleTTL time.Duration) *imageResolutionFailures {
 	if ttl <= 0 {
-		ttl = ImageResolutionFailureTTL
+		ttl = imageResolutionFailureTTL
 	}
-	return &ImageResolutionFailures{cache: cache.New(ttl, ttl), ttl: ttl}
+	if incompatibleTTL <= 0 {
+		incompatibleTTL = imageIncompatibleTTL
+	}
+
+	// Entries carry their own expiry, so the cache default is only a floor for cleanup.
+	return &imageResolutionFailures{
+		cache:           cache.New(ttl, ttl),
+		ttl:             ttl,
+		incompatibleTTL: incompatibleTTL,
+	}
 }
 
 // RecentlyFailed reports whether resolution for this key failed within the TTL.
-func (f *ImageResolutionFailures) RecentlyFailed(key string) bool {
+func (f *imageResolutionFailures) RecentlyFailed(key string) bool {
 	if f == nil {
 		return false
 	}
@@ -73,7 +84,7 @@ func (f *ImageResolutionFailures) RecentlyFailed(key string) bool {
 
 // RecordSuccess clears the consecutive-failure count, so a healthy API is never suppressed because
 // of failures spread across unrelated keys earlier in a listing.
-func (f *ImageResolutionFailures) RecordSuccess() {
+func (f *imageResolutionFailures) RecordSuccess() {
 	if f == nil {
 		return
 	}
@@ -82,8 +93,9 @@ func (f *ImageResolutionFailures) RecordSuccess() {
 	f.consecutiveFailures = 0
 }
 
-// RecordIncompatible suppresses further attempts for this key until the TTL expires, without
-// counting towards wholesale suppression. Use it when resolution answered that this configuration
+// RecordIncompatible suppresses further attempts for this key, without counting towards wholesale
+// suppression, and for far longer than a failure does - the answer is settled rather than
+// recovering, and re-asking would also mean re-logging, once per shape per listing. Use it when resolution answered that this configuration
 // yields no image for the shape: nothing is wrong with the service, and no other key is implicated.
 //
 // It deliberately does not clear the consecutive count either. An answer of "incompatible" can be
@@ -91,18 +103,18 @@ func (f *ImageResolutionFailures) RecordSuccess() {
 // healthy, and treating it as such would let cached answers interleaved with real failures hold
 // the breaker open through an outage. The cost of leaving the count alone is a breaker that can
 // trip slightly early, which only means falling back to the modelled estimate for one TTL.
-func (f *ImageResolutionFailures) RecordIncompatible(key string) {
+func (f *imageResolutionFailures) RecordIncompatible(key string) {
 	if f == nil {
 		return
 	}
-	f.cache.SetDefault(key, struct{}{})
+	f.cache.Set(key, struct{}{}, f.incompatibleTTL)
 }
 
 // RecordFailure suppresses further resolution attempts for this key until the TTL expires, and
 // counts towards suppressing every key at once. Use it when the image service could not answer.
 // Recording again restarts that window, so a persistently failing API is asked at a steady low
 // rate rather than on every listing.
-func (f *ImageResolutionFailures) RecordFailure(key string) {
+func (f *imageResolutionFailures) RecordFailure(key string) {
 	if f == nil {
 		return
 	}
