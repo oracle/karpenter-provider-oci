@@ -93,10 +93,16 @@ func (f *imageResolutionFailures) RecordSuccess() {
 	f.consecutiveFailures = 0
 }
 
-// RecordIncompatible suppresses further attempts for this key, without counting towards wholesale
-// suppression, and for far longer than a failure does - the answer is settled rather than
-// recovering, and re-asking would also mean re-logging, once per shape per listing. Use it when resolution answered that this configuration
-// yields no image for the shape: nothing is wrong with the service, and no other key is implicated.
+// RecordIncompatible records that resolution answered, and the answer is that this configuration
+// yields no image for the shape. Nothing is wrong with the service and no other key is implicated,
+// so this suppresses only its own key and does not count towards wholesale suppression - that is
+// the whole difference from RecordFailure, and what stops a NodeClass with a narrow image filter
+// from switching discovery off for every other NodeClass.
+//
+// It suppresses for far longer than a failure does, because the answer is settled rather than
+// recovering: it changes only when the NodeClass or its images change, and both are part of the
+// key, so a change produces a new key rather than needing this to expire. Re-asking would also
+// mean re-logging, once per shape per listing.
 //
 // It deliberately does not clear the consecutive count either. An answer of "incompatible" can be
 // served entirely from the shape-compatibility cache, so it is not evidence that the service is
