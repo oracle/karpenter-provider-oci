@@ -43,9 +43,20 @@ type fakeImageProvider struct {
 	// failShapes, when set, fails only for those shapes and succeeds for the rest, modelling one
 	// shape with no compatible image among healthy ones.
 	failShapes map[string]bool
-	// failConfigs fails for NodeClasses whose configured imageId is listed, modelling an image
-	// policy that does not cover the shape being asked about.
+	// failConfigs reports no compatible image for NodeClasses whose configured imageId is listed,
+	// modelling an image policy that does not cover the shape being asked about.
 	failConfigs map[string]bool
+	// incompatibleShapes reports no compatible image for those shapes, as distinct from the image
+	// service failing. failShapes models the latter.
+	incompatibleShapes map[string]bool
+	// configErr, when set, is returned instead of resolving, modelling a configuration that cannot
+	// yield an image at all rather than one that misses a particular shape.
+	configErr error
+	// emptyResult returns success with nothing usable in it, modelling the image provider breaking
+	// its own contract. nilResult and nilImageID are the other two shapes that can take.
+	emptyResult bool
+	nilResult   bool
+	nilImageID  bool
 	// gotShapes records what resolution was asked for, so passing the wrong identifier - the
 	// instance type name instead of the shape, say - cannot pass unnoticed.
 	gotShapes []string
@@ -59,7 +70,10 @@ func (f *fakeImageProvider) ResolveImageForShape(ctx context.Context, cfg *ociv1
 	shape string) (*image.ImageResolveResult, error) {
 	f.gotShapes = append(f.gotShapes, shape)
 	if cfg != nil && cfg.ImageId != nil && f.failConfigs[*cfg.ImageId] {
-		return nil, assert.AnError
+		return nil, fmt.Errorf("%w: %s", image.ErrNoCompatibleImage, shape)
+	}
+	if f.incompatibleShapes[shape] {
+		return nil, fmt.Errorf("%w: %s", image.ErrNoCompatibleImage, shape)
 	}
 	if f.block != nil {
 		select {
@@ -70,6 +84,18 @@ func (f *fakeImageProvider) ResolveImageForShape(ctx context.Context, cfg *ociv1
 	}
 	if f.failShapes[shape] {
 		return nil, assert.AnError
+	}
+	if f.configErr != nil {
+		return nil, f.configErr
+	}
+	if f.emptyResult {
+		return &image.ImageResolveResult{}, nil
+	}
+	if f.nilResult {
+		return nil, nil
+	}
+	if f.nilImageID {
+		return &image.ImageResolveResult{Images: []*ocicore.Image{{}}}, nil
 	}
 	return f.resolve()
 }
@@ -853,4 +879,119 @@ func TestResolveImageForDiscovery_SameImageConfigSharesSuppression(t *testing.T)
 
 	assert.Len(t, fake.gotShapes, 1,
 		"the same image policy must not be retried once per NodeClass that uses it")
+}
+
+// A shape with no compatible image is an answer, not an outage. Counting it towards wholesale
+// suppression would let one NodeClass with a narrow filter - which reports "incompatible" for most
+// of the catalogue - switch discovery off for every NodeClass, including those whose images
+// resolve fine and whose measurements are already cached.
+func TestResolveImageForDiscovery_IncompatibleShapesDoNotSuppressTheRest(t *testing.T) {
+	narrow := []string{"BM.GPU.H100.8", "BM.GPU.A100-v2.8", "VM.GPU.A10.1"}
+
+	fake := &fakeImageProvider{
+		imageID:            testImageID,
+		incompatibleShapes: map[string]bool{narrow[0]: true, narrow[1]: true, narrow[2]: true},
+	}
+	p := &DefaultProvider{
+		discoveredCapacity:      cache.NewDiscoveredCapacity(cache.DiscoveredCapacityTTL),
+		imageProvider:           fake,
+		imageResolutionFailures: cache.NewImageResolutionFailures(cache.ImageResolutionFailureTTL),
+	}
+	ctx := context.Background()
+	nodeClass := discoveryNodeClass(testImageID)
+
+	// More consecutive incompatible answers than the service-failure limit tolerates.
+	for _, shape := range narrow {
+		assert.Equal(t, "", p.resolveImageForDiscovery(ctx, shape, nodeClass), shape)
+	}
+
+	assert.Equal(t, testImageID, p.resolveImageForDiscovery(ctx, "VM.Standard.E5.Flex", nodeClass),
+		"a shape whose image resolves must still be discovered after a run of incompatible ones")
+}
+
+// The converse: consecutive failures of the image service itself must still suppress wholesale,
+// which is what bounds a listing when the API is down.
+func TestResolveImageForDiscovery_ServiceFailuresStillSuppressGlobally(t *testing.T) {
+	broken := []string{"VM.Standard.E4.Flex", "VM.Standard.E5.Flex", "VM.Standard3.Flex"}
+
+	fake := &fakeImageProvider{
+		imageID:    testImageID,
+		failShapes: map[string]bool{broken[0]: true, broken[1]: true, broken[2]: true},
+	}
+	p := &DefaultProvider{
+		discoveredCapacity:      cache.NewDiscoveredCapacity(cache.DiscoveredCapacityTTL),
+		imageProvider:           fake,
+		imageResolutionFailures: cache.NewImageResolutionFailures(cache.ImageResolutionFailureTTL),
+	}
+	ctx := context.Background()
+	nodeClass := discoveryNodeClass(testImageID)
+
+	for _, shape := range broken {
+		assert.Equal(t, "", p.resolveImageForDiscovery(ctx, shape, nodeClass), shape)
+	}
+
+	before := len(fake.gotShapes)
+	assert.Equal(t, "", p.resolveImageForDiscovery(ctx, "VM.Standard.A1.Flex", nodeClass),
+		"an unwell image service suppresses every shape")
+	assert.Len(t, fake.gotShapes, before, "and is not asked again while suppressed")
+}
+
+// A configuration that cannot yield an image at all - contradictory, or matching nothing - is as
+// settled an answer as an incompatible shape, and must not be mistaken for an outage either.
+func TestResolveImageForDiscovery_ConfigurationErrorsAreNotOutages(t *testing.T) {
+	configErrs := []error{
+		fmt.Errorf("%w: no image match", image.ErrImageConfiguration),
+		fmt.Errorf("%w: cannot define image ocid and image filter together", image.ErrImageConfiguration),
+		fmt.Errorf("%w: VM.GPU.A10.1", image.ErrNoCompatibleImage),
+	}
+	shapes := []string{"VM.Standard.E4.Flex", "VM.Standard3.Flex", "VM.GPU.A10.1"}
+
+	fake := &fakeImageProvider{imageID: testImageID}
+	p := &DefaultProvider{
+		discoveredCapacity:      cache.NewDiscoveredCapacity(cache.DiscoveredCapacityTTL),
+		imageProvider:           fake,
+		imageResolutionFailures: cache.NewImageResolutionFailures(cache.ImageResolutionFailureTTL),
+	}
+	ctx := context.Background()
+	nodeClass := discoveryNodeClass(testImageID)
+
+	for i, shape := range shapes {
+		fake.configErr = configErrs[i]
+		assert.Equal(t, "", p.resolveImageForDiscovery(ctx, shape, nodeClass), shape)
+	}
+
+	fake.configErr = nil
+	assert.Equal(t, testImageID, p.resolveImageForDiscovery(ctx, "VM.Standard.E5.Flex", nodeClass),
+		"configuration answers must not trip the breaker that guards against an unwell service")
+}
+
+// A success carrying nothing usable is the image provider breaking its contract, not an answer
+// about this shape, so it keeps the bounding that a service failure gets.
+func TestResolveImageForDiscovery_UnusableResultCountsAsFailure(t *testing.T) {
+	shapes := []string{"VM.Standard.E4.Flex", "VM.Standard3.Flex", "VM.Standard.E5.Flex"}
+
+	for name, broken := range map[string]*fakeImageProvider{
+		"no images":    {imageID: testImageID, emptyResult: true},
+		"nil result":   {imageID: testImageID, nilResult: true},
+		"nil image id": {imageID: testImageID, nilImageID: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := &DefaultProvider{
+				discoveredCapacity:      cache.NewDiscoveredCapacity(cache.DiscoveredCapacityTTL),
+				imageProvider:           broken,
+				imageResolutionFailures: cache.NewImageResolutionFailures(cache.ImageResolutionFailureTTL),
+			}
+			ctx := context.Background()
+			nodeClass := discoveryNodeClass(testImageID)
+
+			for _, shape := range shapes {
+				assert.Equal(t, "", p.resolveImageForDiscovery(ctx, shape, nodeClass), shape)
+			}
+
+			before := len(broken.gotShapes)
+			assert.Equal(t, "", p.resolveImageForDiscovery(ctx, "VM.Standard.A1.Flex", nodeClass))
+			assert.Len(t, broken.gotShapes, before,
+				"an image provider returning nothing usable is bounded too")
+		})
+	}
 }

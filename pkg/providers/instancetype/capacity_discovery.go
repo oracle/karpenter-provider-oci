@@ -15,6 +15,7 @@ import (
 	"github.com/mitchellh/hashstructure/v2"
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/cache"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/image"
 	v1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	corev1 "sigs.k8s.io/karpenter/pkg/apis/v1"
@@ -108,10 +109,25 @@ func (p *DefaultProvider) resolveImageForDiscovery(ctx context.Context, shape st
 
 	resolved, err := p.imageProvider.ResolveImageForShape(ctx,
 		nodeClass.Spec.VolumeConfig.BootVolumeConfig.ImageConfig, shape)
-	if err != nil || resolved == nil || len(resolved.Images) == 0 || resolved.Images[0].Id == nil {
+	switch {
+	case image.IsConfigurationError(err):
+		// Resolution answered, and the answer is that this configuration yields no image for this
+		// shape. That is a settled fact about the pair, not a fault: retrying cannot change it, it
+		// cost nothing to ask, and it says nothing about any other key. So it suppresses this key
+		// alone - a NodeClass whose filter covers few shapes must not switch discovery off for
+		// every other NodeClass.
+		p.imageResolutionFailures.RecordIncompatible(failureKey)
+		log.FromContext(ctx).V(1).Info("skipping discovered capacity: no image for shape",
+			"shape", shape, "suppressing-for", cache.ImageResolutionFailureTTL, "reason", err)
+		return ""
+	case err != nil || resolved == nil || len(resolved.Images) == 0 || resolved.Images[0].Id == nil:
+		// Either the service could not answer, or it answered with something unusable. Both say
+		// something about the image API rather than about this shape, so both count towards
+		// suppressing resolution wholesale - that is what stops a listing paying one timeout per
+		// shape while the API is down.
 		p.imageResolutionFailures.RecordFailure(failureKey)
-		log.FromContext(ctx).V(1).Info("skipping discovered capacity: cannot resolve image for shape",
-			"shape", shape, "suppressing-for", cache.ImageResolutionFailureTTL)
+		log.FromContext(ctx).V(1).Info("skipping discovered capacity: image resolution failed",
+			"shape", shape, "suppressing-for", cache.ImageResolutionFailureTTL, "error", err)
 		return ""
 	}
 

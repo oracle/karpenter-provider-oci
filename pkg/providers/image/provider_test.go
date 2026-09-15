@@ -1086,3 +1086,142 @@ func TestListAndFilterImages_Pagination(t *testing.T) {
 	assert.Equal(t, "ocid1.image.123", *images[0].Id)
 	assert.Equal(t, "ocid1.image.456", *images[1].Id)
 }
+
+// Callers distinguish "this configuration has no image for this shape" from "the image service
+// could not answer", and back off very differently for each, so the first must be reported as
+// ErrNoCompatibleImage rather than an anonymous error.
+func TestResolveImageForShape_NoCompatibleImageIsDistinguishable(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+
+	fakeClient.GetImageResp = ocicore.GetImageResponse{
+		Image: ocicore.Image{
+			Id:              lo.ToPtr("ocid1.image.arm"),
+			DisplayName:     lo.ToPtr("arm-image"),
+			TimeCreated:     &common.SDKTime{Time: time.Now()},
+			OperatingSystem: lo.ToPtr("Oracle Linux"),
+		},
+	}
+	// The one candidate image supports an ARM shape only.
+	fakeClient.OnListImageShapeCompatibilityEntries = func(context.Context,
+		ocicore.ListImageShapeCompatibilityEntriesRequest) (ocicore.ListImageShapeCompatibilityEntriesResponse,
+		error) {
+		return ocicore.ListImageShapeCompatibilityEntriesResponse{
+			Items: []ocicore.ImageShapeCompatibilitySummary{{Shape: lo.ToPtr("VM.Standard.A1.Flex")}},
+		}, nil
+	}
+
+	_, err := provider.ResolveImageForShape(ctx,
+		&v1beta1.ImageConfig{ImageId: lo.ToPtr("ocid1.image.arm")}, "VM.Standard.E5.Flex")
+
+	assert.ErrorIs(t, err, ErrNoCompatibleImage)
+	assert.Contains(t, err.Error(), "VM.Standard.E5.Flex", "the error should name the shape asked for")
+}
+
+// The other side of the same contract: a failing service must not masquerade as incompatibility,
+// or callers would stop backing off during an outage.
+func TestResolveImageForShape_ServiceFailureIsNotIncompatibility(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+
+	fakeClient.GetImageResp = ocicore.GetImageResponse{
+		Image: ocicore.Image{
+			Id:              lo.ToPtr("ocid1.image.789"),
+			DisplayName:     lo.ToPtr("test-image"),
+			TimeCreated:     &common.SDKTime{Time: time.Now()},
+			OperatingSystem: lo.ToPtr("Oracle Linux"),
+		},
+	}
+	fakeClient.OnListImageShapeCompatibilityEntries = func(context.Context,
+		ocicore.ListImageShapeCompatibilityEntriesRequest) (ocicore.ListImageShapeCompatibilityEntriesResponse,
+		error) {
+		return ocicore.ListImageShapeCompatibilityEntriesResponse{}, errors.New("service unavailable")
+	}
+
+	_, err := provider.ResolveImageForShape(ctx,
+		&v1beta1.ImageConfig{ImageId: lo.ToPtr("ocid1.image.789")}, "VM.Standard.E5.Flex")
+
+	assert.Error(t, err)
+	assert.NotErrorIs(t, err, ErrNoCompatibleImage)
+}
+
+// Configuration that cannot yield an image is classified with the shape-incompatibility case
+// rather than with service failures, so callers back off on the right thing.
+func TestResolveImages_ConfigurationErrorsAreClassified(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+
+	for name, cfg := range map[string]*v1beta1.ImageConfig{
+		"neither id nor filter": {},
+		"both id and filter": {
+			ImageId:     lo.ToPtr("ocid1.image.123"),
+			ImageFilter: &v1beta1.ImageSelectorTerm{OsFilter: "Oracle Linux"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := provider.ResolveImages(ctx, cfg)
+
+			assert.ErrorIs(t, err, ErrImageConfiguration)
+			assert.True(t, IsConfigurationError(err))
+		})
+	}
+
+	// A nil configuration is the "neither" case by another route.
+	_, err := provider.ResolveImages(ctx, nil)
+	assert.True(t, IsConfigurationError(err))
+
+	// A filter that matches nothing empties the candidate list before any filtering happens.
+	fakeClient.ListImagesResp = ocicore.ListImagesResponse{}
+	_, err = provider.ResolveImages(ctx, &v1beta1.ImageConfig{
+		ImageFilter: &v1beta1.ImageSelectorTerm{OsFilter: "No Such OS"},
+	})
+	assert.ErrorIs(t, err, ErrImageConfiguration, "an empty candidate list is a configuration answer")
+}
+
+// And the converse, so a service failure is never mistaken for a configuration one.
+func TestIsConfigurationError_RejectsServiceFailures(t *testing.T) {
+	assert.False(t, IsConfigurationError(errors.New("service unavailable")))
+	assert.False(t, IsConfigurationError(context.DeadlineExceeded))
+	assert.False(t, IsConfigurationError(nil))
+}
+
+// The selection can also empty out later, when candidate images are dropped for being
+// incompatible with the cluster version. That is still the configuration selecting nothing, not
+// the service failing, so it carries the same sentinel.
+func TestResolveImages_FilteredToNothingIsAConfigurationError(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider.k8sVersion = semver.New("1.30.0")
+
+	// OKE images are matched, but none carries a kubelet version, so all are dropped.
+	fakeClient.ListImagesResp = ocicore.ListImagesResponse{
+		Items: []ocicore.Image{
+			{
+				Id:              lo.ToPtr("ocid1.image.untagged"),
+				DisplayName:     lo.ToPtr("untagged-image"),
+				TimeCreated:     &common.SDKTime{Time: time.Now()},
+				OperatingSystem: lo.ToPtr("Oracle Linux"),
+			},
+		},
+	}
+
+	_, err := provider.ResolveImages(ctx, &v1beta1.ImageConfig{
+		ImageType:   v1beta1.OKEImage,
+		ImageFilter: &v1beta1.ImageSelectorTerm{OsFilter: "Oracle Linux"},
+	})
+
+	assert.ErrorIs(t, err, ErrImageConfiguration)
+	assert.True(t, IsConfigurationError(err))
+}
