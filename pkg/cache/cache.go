@@ -46,7 +46,7 @@ const (
 	//     without changing anything in the key, so nothing else would invalidate the entry.
 	//
 	// Set the TTL to zero to disable capacity discovery entirely; see
-	// --discovered-capacity-ttl-hours.
+	// --discovered-node-capacity-ttl-hours.
 	DiscoveredCapacityTTL = 60 * 24 * time.Hour
 	// DiscoveredCapacityCleanupInterval triggers cleanup of the discovered-capacity cache.
 	DiscoveredCapacityCleanupInterval = time.Hour

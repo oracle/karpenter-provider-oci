@@ -168,9 +168,9 @@ spec:
             - name: UNAVAILABLE_OFFERINGS_TTL_SECONDS
               value: "{{ .Values.settings.unavailableOfferingsTTLSeconds }}"
             {{- end }}
-            {{- if not (kindIs "invalid" .Values.settings.discoveredCapacityTTLHours) }}
-            - name: DISCOVERED_CAPACITY_TTL_HOURS
-              value: "{{ .Values.settings.discoveredCapacityTTLHours }}"
+            {{- if not (kindIs "invalid" .Values.settings.discoveredNodeCapacityTTLHours) }}
+            - name: DISCOVERED_NODE_CAPACITY_TTL_HOURS
+              value: "{{ .Values.settings.discoveredNodeCapacityTTLHours }}"
             {{- end }}
             {{- if not (kindIs "invalid" .Values.settings.enableUnavailableOfferingsOnServiceLimitExceeded) }}
             - name: ENABLE_UNAVAILABLE_OFFERINGS_ON_SERVICE_LIMIT_EXCEEDED

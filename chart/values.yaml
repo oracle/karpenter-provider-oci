@@ -284,7 +284,7 @@ settings:
   # capacity is used instead. Set to 0 to disable capacity discovery: the node-watching controller
   # is not started, no image is resolved while scheduling, and every launch is modelled from the
   # configured vmMemoryOverhead estimate below instead of from measurement.
-  discoveredCapacityTTLHours: 1440
+  discoveredNodeCapacityTTLHours: 1440
   # VM memory overhead. OCI reserves memory below the guest, so a VM shape advertised as 32 GB
   # presents roughly 30.9 GiB of MemTotal to Linux. Karpenter must estimate a node's memory
   # before the node exists, so this is subtracted from every VM shape's modelled capacity.

@@ -357,7 +357,7 @@ var _ = Describe("Test Operator Options", func() {
 
 // The disable path only means anything if the option actually reaches the cache, so pin the flag
 // default, the chart default and the constant to each other, and cover the validation.
-func TestDiscoveredCapacityTTLOption(t *testing.T) {
+func TestDiscoveredNodeCapacityTTLOption(t *testing.T) {
 	t.Run("flag default matches the cache constant", func(t *testing.T) {
 		g := NewWithT(t)
 
@@ -365,7 +365,7 @@ func TestDiscoveredCapacityTTLOption(t *testing.T) {
 		fs := &options.FlagSet{FlagSet: flag.NewFlagSet("test", flag.ContinueOnError)}
 		opts.AddFlags(fs)
 
-		g.Expect(opts.DiscoveredCapacityTTLHours).To(Equal(int(cache.DiscoveredCapacityTTL.Hours())))
+		g.Expect(opts.DiscoveredNodeCapacityTTLHours).To(Equal(int(cache.DiscoveredCapacityTTL.Hours())))
 	})
 
 	t.Run("chart default matches the flag default", func(t *testing.T) {
@@ -376,13 +376,13 @@ func TestDiscoveredCapacityTTLOption(t *testing.T) {
 
 		var values struct {
 			Settings struct {
-				DiscoveredCapacityTTLHours *int `json:"discoveredCapacityTTLHours"`
+				DiscoveredNodeCapacityTTLHours *int `json:"discoveredNodeCapacityTTLHours"`
 			} `json:"settings"`
 		}
 		g.Expect(yaml.Unmarshal(raw, &values)).To(Succeed())
-		g.Expect(values.Settings.DiscoveredCapacityTTLHours).ToNot(BeNil(),
-			"chart/values.yaml must set settings.discoveredCapacityTTLHours")
-		g.Expect(*values.Settings.DiscoveredCapacityTTLHours).To(Equal(int(cache.DiscoveredCapacityTTL.Hours())))
+		g.Expect(values.Settings.DiscoveredNodeCapacityTTLHours).ToNot(BeNil(),
+			"chart/values.yaml must set settings.discoveredNodeCapacityTTLHours")
+		g.Expect(*values.Settings.DiscoveredNodeCapacityTTLHours).To(Equal(int(cache.DiscoveredCapacityTTL.Hours())))
 	})
 
 	t.Run("chart env var name matches the flag name", func(t *testing.T) {
@@ -393,12 +393,12 @@ func TestDiscoveredCapacityTTLOption(t *testing.T) {
 
 		// Parse() derives the env name from the flag name, so a mismatch on either side means the
 		// chart value is silently ignored. Matched as a whole line so a suffixed typo cannot pass.
-		g.Expect(string(raw)).To(MatchRegexp(`(?m)^\s*- name: DISCOVERED_CAPACITY_TTL_HOURS\s*$`))
+		g.Expect(string(raw)).To(MatchRegexp(`(?m)^\s*- name: DISCOVERED_NODE_CAPACITY_TTL_HOURS\s*$`))
 
 		// Guarded by kindIs "invalid" rather than `with`: Go templates treat 0 as falsy, so `with`
 		// would silently discard an explicitly configured 0 - which is how the feature is disabled.
 		g.Expect(string(raw)).To(ContainSubstring(
-			`if not (kindIs "invalid" .Values.settings.discoveredCapacityTTLHours)`))
+			`if not (kindIs "invalid" .Values.settings.discoveredNodeCapacityTTLHours)`))
 	})
 
 	t.Run("validation", func(t *testing.T) {
@@ -406,28 +406,28 @@ func TestDiscoveredCapacityTTLOption(t *testing.T) {
 
 		base := func(ttl int) *Options {
 			return &Options{
-				ClusterCompartmentId:          "ocid1.compartment.oc1..a",
-				VcnCompartmentId:              "ocid1.compartment.oc1..b",
-				PreBakedImageCompartmentId:    "ocid1.compartment.oc1..c",
-				ApiserverEndpoint:             "10.0.0.1:6443",
-				ShapeMetaRefreshIntervalHours: 24,
-				InstanceLaunchTimeoutVMMins:   5,
-				InstanceLaunchTimeoutBMMins:   60,
-				DiscoveredCapacityTTLHours:    ttl,
+				ClusterCompartmentId:           "ocid1.compartment.oc1..a",
+				VcnCompartmentId:               "ocid1.compartment.oc1..b",
+				PreBakedImageCompartmentId:     "ocid1.compartment.oc1..c",
+				ApiserverEndpoint:              "10.0.0.1:6443",
+				ShapeMetaRefreshIntervalHours:  24,
+				InstanceLaunchTimeoutVMMins:    5,
+				InstanceLaunchTimeoutBMMins:    60,
+				DiscoveredNodeCapacityTTLHours: ttl,
 			}
 		}
 
 		g.Expect(base(1440).Validate()).To(Succeed())
 		g.Expect(base(0).Validate()).To(Succeed(), "zero must be accepted: it is how the feature is disabled")
-		g.Expect(base(-1).Validate()).To(MatchError(ContainSubstring("discovered-capacity-ttl-hours")))
+		g.Expect(base(-1).Validate()).To(MatchError(ContainSubstring("discovered-node-capacity-ttl-hours")))
 
 		// The value is multiplied by time.Hour, so anything past this overflows int64 nanoseconds.
 		// 2^51 hours wraps to exactly zero, which would disable the feature instead of failing.
-		g.Expect(base(maxDiscoveredCapacityTTLHours).Validate()).To(Succeed())
-		g.Expect(base(maxDiscoveredCapacityTTLHours + 1).Validate()).
-			To(MatchError(ContainSubstring("discovered-capacity-ttl-hours")))
+		g.Expect(base(maxDiscoveredNodeCapacityTTLHours).Validate()).To(Succeed())
+		g.Expect(base(maxDiscoveredNodeCapacityTTLHours + 1).Validate()).
+			To(MatchError(ContainSubstring("discovered-node-capacity-ttl-hours")))
 		g.Expect(base(1<<51).Validate()).
-			To(MatchError(ContainSubstring("discovered-capacity-ttl-hours")),
+			To(MatchError(ContainSubstring("discovered-node-capacity-ttl-hours")),
 				"a value that wraps to zero must be rejected, not silently disable discovery")
 		wrapping := 1 << 51
 		g.Expect(time.Duration(wrapping)*time.Hour).To(BeZero(), "the wrap this guards against")
