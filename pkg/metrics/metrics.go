@@ -27,6 +27,28 @@ const (
 	ApiStatusCodeLabel     = "status_code"
 	OperationLabel         = "operation"
 	StatusLabel            = "status"
+
+	// OutcomeLabel carries why capacity discovery did or did not have advice to give. Its values
+	// are a small closed set, so the series stays bounded however many shapes are listed.
+	OutcomeLabel = "outcome"
+
+	// OutcomeApplied means a measurement was found and used in place of the estimate.
+	OutcomeApplied = "applied"
+	// OutcomeNoMeasurement means nothing of this kind has registered yet, or what did has expired.
+	// This is the ordinary state before a combination's first node comes up.
+	OutcomeNoMeasurement = "no_measurement"
+	// OutcomeNoImage means the NodeClass configuration yields no image for this shape, so there is
+	// nothing to key a measurement on. Expected for a NodeClass whose images cover part of the
+	// catalogue.
+	OutcomeNoImage = "no_image"
+	// OutcomeSuppressed means a recent outcome for this shape and image configuration is still
+	// standing, so no attempt was made.
+	OutcomeSuppressed = "suppressed"
+	// OutcomeResolutionFailed means the image service could not answer, or answered unusably. This
+	// is the one outcome that indicates something is wrong.
+	OutcomeResolutionFailed = "resolution_failed"
+	// OutcomeDisabled means capacity discovery is switched off.
+	OutcomeDisabled = "disabled"
 )
 
 var (
@@ -58,6 +80,24 @@ var (
 			InstanceTypeLabel,
 			CapacityTypeLabel,
 			ZoneLabel,
+		},
+	)
+
+	// CapacityAdviceCounter separates the expected reasons for having no measured capacity to
+	// offer - nothing observed yet, no image for the shape, discovery switched off - from a
+	// genuine failure of image resolution. All of them leave the modelled estimate in place, so
+	// only OutcomeResolutionFailed indicates a problem; the rest are ordinary.
+	CapacityAdviceCounter = opmetrics.NewPrometheusCounter(
+		crmetrics.Registry,
+		prometheus.CounterOpts{
+			Namespace: metrics.Namespace,
+			Subsystem: CloudProviderSubsystem,
+			Name:      "capacity_discovery_advice_count",
+			Help: "Number of times capacity discovery was consulted while modelling an instance " +
+				"type, by outcome",
+		},
+		[]string{
+			OutcomeLabel,
 		},
 	)
 

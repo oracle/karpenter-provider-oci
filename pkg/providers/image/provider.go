@@ -27,6 +27,27 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+// Resolution can fail for two quite different reasons, and callers that back off on API trouble
+// need to tell them apart: an outage says something about the service and warrants backing off
+// wholesale, while a configuration that selects nothing is a settled answer which retrying cannot
+// change and which says nothing about any other configuration.
+var (
+	// ErrNoCompatibleImage reports that resolution succeeded and none of the configured images is
+	// compatible with the requested shape.
+	ErrNoCompatibleImage = errors.New("no image suitable for shape")
+
+	// ErrImageConfiguration reports that the image configuration itself cannot yield an image -
+	// it is contradictory, empty, or matches nothing.
+	ErrImageConfiguration = errors.New("image configuration resolves to no image")
+)
+
+// IsConfigurationError reports whether resolution failed because of the configuration rather than
+// because the image service could not answer. Classification lives here, beside the code that
+// produces the errors, so callers do not have to track which sentinels exist.
+func IsConfigurationError(err error) bool {
+	return errors.Is(err, ErrNoCompatibleImage) || errors.Is(err, ErrImageConfiguration)
+}
+
 type Provider interface {
 	ResolveImages(ctx context.Context, imageCfg *v1beta1.ImageConfig) (*ImageResolveResult, error)
 
@@ -73,7 +94,8 @@ func (p *DefaultProvider) ResolveImages(ctx context.Context,
 	imageCfg *v1beta1.ImageConfig) (*ImageResolveResult, error) {
 	if imageCfg != nil {
 		if imageCfg.ImageId != nil && imageCfg.ImageFilter != nil {
-			return nil, errors.New("cannot define image ocid and image filter together")
+			return nil, fmt.Errorf("%w: cannot define image ocid and image filter together",
+				ErrImageConfiguration)
 		}
 
 		var images []*ocicore.Image
@@ -100,7 +122,7 @@ func (p *DefaultProvider) ResolveImages(ctx context.Context,
 		}
 
 		if len(images) == 0 {
-			return nil, errors.New("no image match")
+			return nil, fmt.Errorf("%w: no image match", ErrImageConfiguration)
 		}
 
 		log.FromContext(ctx).V(1).Info("image resolving result", "imageNames",
@@ -111,7 +133,7 @@ func (p *DefaultProvider) ResolveImages(ctx context.Context,
 		return p.toImageResolveResult(images, imageCfg), nil
 	}
 
-	return nil, errors.New("either image ocid or image filter is required")
+	return nil, fmt.Errorf("%w: either image ocid or image filter is required", ErrImageConfiguration)
 }
 
 func (p *DefaultProvider) ResolveImageForShape(ctx context.Context,
@@ -139,7 +161,7 @@ func (p *DefaultProvider) ResolveImageForShape(ctx context.Context,
 	}
 
 	if firstImage == nil {
-		return nil, fmt.Errorf("no image suitable for shape %s", shape)
+		return nil, fmt.Errorf("%w: %s", ErrNoCompatibleImage, shape)
 	}
 
 	log.FromContext(ctx).V(1).Info("image resolving result for shape", "imageName",
@@ -281,7 +303,7 @@ func (p *DefaultProvider) toImageResolveResult(images []*ocicore.Image,
 func (p *DefaultProvider) filterAndSortImages(ctx context.Context, images []*ocicore.Image,
 	imageCfg *v1beta1.ImageConfig) ([]*ocicore.Image, error) {
 	if len(images) == 0 {
-		return nil, errors.New("no image available")
+		return nil, fmt.Errorf("%w: no image available", ErrImageConfiguration)
 	}
 
 	// sort by time created by default
