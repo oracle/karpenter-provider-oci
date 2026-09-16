@@ -5,6 +5,7 @@
 - Provides opt-in and configurable node repair policies.
 - Provides an optional, configurable client-side [OCI API rate limiter](rate-limiter.md) with separate controls for read and write requests.
 - Supports upstream `NodeOverlay` when `settings.featureGates.nodeOverlay=true`, allowing operators to add scheduling-time capacity overlays or price adjustments for selected instance types and node pools.
+- Supports the upstream `CapacityBuffer` API when `settings.featureGates.capacityBuffer=true`, enabling proactive provisioning and replenishment of spare node capacity.
 - Supports upstream static node pools when `settings.featureGates.staticCapacity=true`, enabling fixed-replica `NodePool.spec.replicas` workflows in addition to demand-driven provisioning.
 - Supports a wide range of OCI cloud-specific features through `OCINodeClass`, including:
     - Generic support of OCI compute VM and BM shapes and corresponding special scheduling labels

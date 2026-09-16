@@ -44,8 +44,8 @@ kubectl patch ocinodeclasses.oci.oraclecloud.com --all --type=merge -p '{"metada
 kubectl patch nodeclaims.karpenter.sh --all --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
 kubectl patch nodepools.karpenter.sh --all --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
 kubectl patch nodeoverlays.karpenter.sh --all --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
-kubectl patch crd ocinodeclasses.oci.oraclecloud.com nodeclaims.karpenter.sh nodepools.karpenter.sh nodeoverlays.karpenter.sh --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
-kubectl delete crd ocinodeclasses.oci.oraclecloud.com nodeclaims.karpenter.sh nodepools.karpenter.sh nodeoverlays.karpenter.sh --ignore-not-found=true
+kubectl patch crd ocinodeclasses.oci.oraclecloud.com nodeclaims.karpenter.sh nodepools.karpenter.sh nodeoverlays.karpenter.sh capacitybuffers.autoscaling.x-k8s.io --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+kubectl delete crd ocinodeclasses.oci.oraclecloud.com nodeclaims.karpenter.sh nodepools.karpenter.sh nodeoverlays.karpenter.sh capacitybuffers.autoscaling.x-k8s.io --ignore-not-found=true
 helm install karpenter "./$KARPENTER_CHART_TGZ" --values "$VALUES_YAML_FILE" "${NS_FLAG[@]}" "${CREATE_NS_FLAG[@]}" --wait --timeout 5m
 
 # Final rollout verification and summary

@@ -290,6 +290,89 @@ Notes for `NodeOverlay` usage:
 - `spec.capacity` can add extended resources only; it cannot override standard resources such as CPU, memory, ephemeral storage, or pods.
 - If multiple overlays match, higher `weight` wins. Overlays with the same weight are merged in alphabetical order.
 
+## Pre-provision spare capacity with `CapacityBuffer`
+
+KPO supports the upstream `CapacityBuffer` API when `settings.featureGates.capacityBuffer=true`. A `CapacityBuffer` reserves spare node capacity by adding virtual placeholder pods to Karpenter's scheduling simulation. These placeholders are never created as Kubernetes `Pod` resources; they cause KPO to provision capacity before real workloads need it and are replenished when workloads consume the buffer. KPO v1.4.0 serves `CapacityBuffer` as `autoscaling.x-k8s.io/v1beta1`. For the upstream behavior and API details, see the [Karpenter CapacityBuffers documentation](https://karpenter.sh/docs/concepts/capacitybuffers/).
+
+Enable the feature gate through Helm values:
+
+```yaml
+settings:
+  featureGates:
+    capacityBuffer: true
+```
+
+The following example keeps two replicas' worth of an nginx deployment available as spare capacity, even while the deployment is scaled to zero:
+
+```yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: default
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:stable-alpine
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: autoscaling.x-k8s.io/v1beta1
+kind: CapacityBuffer
+metadata:
+  name: nginx-buffer
+  namespace: default
+spec:
+  provisioningStrategy: buffer.x-k8s.io/active-capacity
+  scalableRef:
+    apiGroup: apps
+    kind: Deployment
+    name: nginx
+  replicas: 2
+  limits:
+    cpu: "1"
+    memory: "1Gi"
+```
+
+The buffer's `spec.limits` caps its total resource requests at 1 CPU and 1 GiB of memory. With each nginx replica requesting `500m` CPU and `512Mi` memory, these limits allow the two requested buffer replicas. These are buffer sizing limits, not container runtime limits or a cap on the total resources of the nodes KPO launches.
+
+After applying the resources, inspect the buffer and watch KPO provision nodes for the virtual replicas:
+
+```bash
+kubectl get capacitybuffer nginx-buffer
+kubectl describe capacitybuffer nginx-buffer
+kubectl get nodes --watch
+```
+
+Scale nginx to consume the reserved capacity:
+
+```bash
+kubectl scale deployment nginx --replicas=2
+kubectl rollout status deployment/nginx
+```
+
+Karpenter continues to simulate two buffer replicas after the real nginx pods are scheduled. Depending on the remaining capacity and the applicable `NodePool` constraints, KPO may launch more nodes to refill the buffer.
+
+Notes for `CapacityBuffer` usage:
+
+- The feature is Alpha and disabled by default. The CRD, controller feature gate, and RBAC permissions for `capacitybuffers` must all be installed before creating a buffer.
+- Set exactly one of `spec.scalableRef` or `spec.podTemplateRef`. References are resolved in the `CapacityBuffer` namespace.
+- A `scalableRef` supplies the pod template from a scalable workload. Use `replicas` for a fixed number of buffer chunks or `percentage` for a proportion of the workload's current replica count.
+- A `podTemplateRef` points to a `PodTemplate` and requires `replicas` or `limits` to define the desired buffer size.
+- Buffer provisioning still respects pod scheduling requirements, available instance types, and `NodePool` limits. Check `status.conditions` for readiness and provisioning progress.
+
 ## Launch worker nodes for an OciIpNativeCNI cluster
 
 The sample `OCINodeClass` below includes a secondary VNIC configuration. In clusters using the OciIpNativeCNI add-on, worker nodes provisioned by Karpenter will attach a secondary VNIC. All pods will receive a VCN-routable IP address from the secondary VNIC’s subnet, and you can configure the number of allocated IP addresses as needed.

@@ -48,11 +48,13 @@ import (
 	clientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
+	"sigs.k8s.io/karpenter/pkg/controllers/dynamicresources/deviceallocation"
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/events"
 	coreoptions "sigs.k8s.io/karpenter/pkg/operator/options"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
+	"sigs.k8s.io/karpenter/pkg/state/virtualpods"
 	coretest "sigs.k8s.io/karpenter/pkg/test"
 	. "sigs.k8s.io/karpenter/pkg/test/expectations"
 )
@@ -1316,7 +1318,8 @@ var _ = Describe("CloudProvider NodePool Fallback", func() {
 		clk := clock.RealClock{}
 		recorder := events.NewRecorder(&record.FakeRecorder{})
 		cluster = state.NewCluster(clk, k8sClient, cp)
-		prov = provisioning.NewProvisioner(k8sClient, recorder, cp, cluster, clk)
+		prov = provisioning.NewProvisioner(k8sClient, recorder, cp, cluster, clk,
+			deviceallocation.NewController(k8sClient), virtualpods.NewVirtualPodCache(k8sClient))
 		provCtx = coreoptions.ToContext(ctx, coretest.Options())
 
 		// Preferred pool has the higher weight, so the scheduler always tries it first.
@@ -1492,7 +1495,8 @@ var _ = Describe("CloudProvider Flex Config Scoping", func() {
 		clk := clock.RealClock{}
 		recorder := events.NewRecorder(&record.FakeRecorder{})
 		cluster = state.NewCluster(clk, k8sClient, cp)
-		prov = provisioning.NewProvisioner(k8sClient, recorder, cp, cluster, clk)
+		prov = provisioning.NewProvisioner(k8sClient, recorder, cp, cluster, clk,
+			deviceallocation.NewController(k8sClient), virtualpods.NewVirtualPodCache(k8sClient))
 		provCtx = coreoptions.ToContext(ctx, coretest.Options())
 
 		pool = fallbackTestNodePool(uniqueName("flex-pool"), nodeClass.Name, 100)
@@ -1612,7 +1616,8 @@ var _ = Describe("CloudProvider Compartment Scoping", func() {
 		clk := clock.RealClock{}
 		recorder := events.NewRecorder(&record.FakeRecorder{})
 		cluster = state.NewCluster(clk, k8sClient, cp)
-		prov = provisioning.NewProvisioner(k8sClient, recorder, cp, cluster, clk)
+		prov = provisioning.NewProvisioner(k8sClient, recorder, cp, cluster, clk,
+			deviceallocation.NewController(k8sClient), virtualpods.NewVirtualPodCache(k8sClient))
 		provCtx = coreoptions.ToContext(ctx, coretest.Options())
 
 		// Pool A has the higher weight so the scheduler tries it (compartment A) first.
