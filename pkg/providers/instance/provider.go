@@ -174,40 +174,7 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 	// failure for one config from suppressing the shape's other configs.
 	if p.unavailableOfferings != nil {
 		defer func() {
-			if !IsSkippableLaunchError(err, p.enableUnavailableOfferingsOnServiceLimitExceeded) {
-				return
-			}
-
-			// The unavailable-offerings cache key does not include placement scope
-			// (capacity reservation, compute cluster, cluster placement group, or fault domain).
-			// A failure scoped to one of those is narrower than the generic
-			// (shape, config, zone, capacity-type) key, so caching it would wrongly suppress
-			// otherwise-valid generic capacity for other NodeClaims. Two proposals can only share
-			// this key if they differ by one of these fields, so skipping them here also prevents a
-			// single failed proposal from suppressing an offering another proposal could still
-			// launch. This deliberately gives up cache-based fallback for placement-scoped
-			// failures; a future solution could include the placement scope in the cache key.
-			if placementProposal.CapacityReservationId != nil ||
-				placementProposal.ComputeClusterId != nil ||
-				placementProposal.ClusterPlacementGroupId != nil ||
-				placementProposal.Fd != nil {
-				return
-			}
-
-			// QuotaExceeded is an administrator-defined quota failure for a specific compartment
-			// and resource, so scope the cache entry to the target compartment; otherwise a quota
-			// failure in one node compartment would wrongly suppress the same offering for
-			// NodeClasses launching into other compartments. Host-capacity exhaustion and
-			// tenancy-scoped LimitExceeded service limits apply regardless of compartment, so they
-			// use an empty (tenancy-wide) compartment scope.
-			compartment := ""
-			if oci.IsQuotaExceeded(err) {
-				compartment = p.GetInstanceCompartment(nodeClass)
-			}
-
-			p.unavailableOfferings.MarkUnavailable(ctx, instanceType.Shape,
-				instanceType.Ocpu, instanceType.MemoryInGbs,
-				utils.AdToZoneLabelValue(placementProposal.Ad), capacityType, compartment)
+			p.markUnavailableOffering(ctx, nodeClass, instanceType, placementProposal, capacityType, err)
 		}()
 	}
 
@@ -352,6 +319,48 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 			}
 		}
 	}
+}
+
+func (p *DefaultProvider) markUnavailableOffering(ctx context.Context,
+	nodeClass *v1beta1.OCINodeClass,
+	instanceType *instancetype.OciInstanceType,
+	placementProposal *placement.Proposal,
+	capacityType string,
+	err error) {
+	if !IsSkippableLaunchError(err, p.enableUnavailableOfferingsOnServiceLimitExceeded) {
+		return
+	}
+
+	// The unavailable-offerings cache key does not include placement scope
+	// (capacity reservation, compute cluster, cluster placement group, or fault domain).
+	// A failure scoped to one of those is narrower than the generic
+	// (shape, config, zone, capacity-type) key, so caching it would wrongly suppress
+	// otherwise-valid generic capacity for other NodeClaims. Two proposals can only share
+	// this key if they differ by one of these fields, so skipping them here also prevents a
+	// single failed proposal from suppressing an offering another proposal could still
+	// launch. This deliberately gives up cache-based fallback for placement-scoped
+	// failures; a future solution could include the placement scope in the cache key.
+	if placementProposal.CapacityReservationId != nil ||
+		placementProposal.ComputeClusterId != nil ||
+		placementProposal.ClusterPlacementGroupId != nil ||
+		placementProposal.Fd != nil {
+		return
+	}
+
+	// QuotaExceeded is an administrator-defined quota failure for a specific compartment
+	// and resource, so scope the cache entry to the target compartment; otherwise a quota
+	// failure in one node compartment would wrongly suppress the same offering for
+	// NodeClasses launching into other compartments. Host-capacity exhaustion and
+	// tenancy-scoped LimitExceeded service limits apply regardless of compartment, so they
+	// use an empty (tenancy-wide) compartment scope.
+	compartment := ""
+	if oci.IsQuotaExceeded(err) {
+		compartment = p.GetInstanceCompartment(nodeClass)
+	}
+
+	p.unavailableOfferings.MarkUnavailable(ctx, instanceType.Shape,
+		instanceType.Ocpu, instanceType.MemoryInGbs,
+		utils.AdToZoneLabelValue(placementProposal.Ad), capacityType, compartment)
 }
 
 func (p *DefaultProvider) instanceInProvisioningOrPlacementTimeOut(ctx context.Context,

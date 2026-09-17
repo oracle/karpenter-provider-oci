@@ -230,7 +230,8 @@ var (
 			Namespace: metrics.Namespace,
 			Subsystem: CloudProviderSubsystem,
 			Name:      "leader_node_info",
-			Help:      "Information about the Kubernetes node hosting the elected Karpenter Provider OCI controller. The value is always 1.",
+			Help: "Information about the Kubernetes node hosting the elected Karpenter Provider OCI controller. " +
+				"The value is always 1.",
 		},
 		[]string{
 			NodeNameLabel,

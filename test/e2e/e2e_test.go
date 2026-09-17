@@ -705,7 +705,9 @@ func (s *E2ETestSuite) waitForNoTestNodeClaims() error {
 		})
 }
 
-func (s *E2ETestSuite) restoreNodePoolRequirements(requirements []karpenterv1.NodeSelectorRequirementWithMinValues) error {
+func (s *E2ETestSuite) restoreNodePoolRequirements(
+	requirements []karpenterv1.NodeSelectorRequirementWithMinValues,
+) error {
 	nodePool := &karpenterv1.NodePool{}
 	if err := s.ctrlClient.Get(s.ctx, client.ObjectKey{Name: s.testConfig.NodePool.Name}, nodePool); err != nil {
 		return err

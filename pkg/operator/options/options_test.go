@@ -10,7 +10,6 @@ package options
 import (
 	"context"
 	"flag"
-	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	"math"
 	"os"
 	"regexp"
@@ -21,6 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/instancetype"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/network"
 	"github.com/samber/lo"
