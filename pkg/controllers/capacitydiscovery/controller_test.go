@@ -9,7 +9,6 @@ package capacitydiscovery
 
 import (
 	"context"
-	discovery "github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	"testing"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/awslabs/operatorpkg/status"
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/fakes"
+	discovery "github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	"github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

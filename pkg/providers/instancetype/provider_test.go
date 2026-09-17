@@ -10,7 +10,6 @@ package instancetype
 import (
 	"context"
 	"errors"
-	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +22,7 @@ import (
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/cache"
 	"github.com/oracle/karpenter-provider-oci/pkg/fakes"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacityreservation"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/computecluster"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/identity"
