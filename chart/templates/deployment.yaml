@@ -104,6 +104,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: KPO_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
             - name: MEMORY_LIMIT
               valueFrom:
                 resourceFieldRef:

@@ -134,3 +134,80 @@ func TestRecordWorkRequestProcessTime(t *testing.T) {
 	}
 
 }
+
+func TestRecordOCISpecificMetrics(t *testing.T) {
+	RecordLeaderNode("worker-node-1")
+	leaderNodeMetric, ok := fakes.FindMetricWithLabelValues(t,
+		"leader_node_info",
+		map[string]string{
+			NodeNameLabel: "worker-node-1",
+		})
+	assert.True(t, ok)
+	assert.Equal(t, float64(1), leaderNodeMetric.GetGauge().GetValue())
+
+	DeleteLeaderNode("worker-node-1")
+	_, ok = fakes.FindMetricWithLabelValues(t,
+		"leader_node_info",
+		map[string]string{
+			NodeNameLabel: "worker-node-1",
+		})
+	assert.False(t, ok)
+
+	RecordNodeClassReady("default", true)
+	nodeClassMetric, ok := fakes.FindMetricWithLabelValues(t,
+		"nodeclass_ready",
+		map[string]string{
+			NodeClassLabel: "default",
+		})
+	assert.True(t, ok)
+	assert.Equal(t, float64(1), nodeClassMetric.GetGauge().GetValue())
+
+	DeleteNodeClassReady("default")
+	_, ok = fakes.FindMetricWithLabelValues(t,
+		"nodeclass_ready",
+		map[string]string{
+			NodeClassLabel: "default",
+		})
+	assert.False(t, ok)
+
+	RecordInstanceLaunch("on-demand", "VM.Standard.E5.Flex", "AD-1", ResultFailure)
+	launchMetric, ok := fakes.FindMetricWithLabelValues(t,
+		"instance_launches_total",
+		map[string]string{
+			CapacityTypeLabel:       "on-demand",
+			ShapeLabel:              "VM.Standard.E5.Flex",
+			AvailabilityDomainLabel: "AD-1",
+			ResultLabel:             ResultFailure,
+		})
+	assert.True(t, ok)
+	assert.Equal(t, float64(1), launchMetric.GetCounter().GetValue())
+
+	RecordCapacityError("on-demand", "VM.Standard.E5.Flex", "AD-1", "FD-1")
+	capacityMetric, ok := fakes.FindMetricWithLabelValues(t,
+		"capacity_errors_total",
+		map[string]string{
+			CapacityTypeLabel:       "on-demand",
+			ShapeLabel:              "VM.Standard.E5.Flex",
+			AvailabilityDomainLabel: "AD-1",
+			FaultDomainLabel:        "FD-1",
+		})
+	assert.True(t, ok)
+	assert.Equal(t, float64(1), capacityMetric.GetCounter().GetValue())
+
+	RecordWorkRequestOutcome("LaunchInstance", "SUCCEEDED")
+	workRequestMetric, ok := fakes.FindMetricWithLabelValues(t,
+		"work_requests_total",
+		map[string]string{
+			OperationLabel: "LaunchInstance",
+			StatusLabel:    "SUCCEEDED",
+		})
+	assert.True(t, ok)
+	assert.Equal(t, float64(1), workRequestMetric.GetCounter().GetValue())
+
+	RecordVcnIPNativeEnabled(true)
+	vcnMetric, ok := fakes.FindMetricWithLabelValues(t,
+		"vcn_ip_native_enabled",
+		map[string]string{})
+	assert.True(t, ok)
+	assert.Equal(t, float64(1), vcnMetric.GetGauge().GetValue())
+}

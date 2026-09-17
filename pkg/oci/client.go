@@ -259,6 +259,7 @@ func decorate[T any, R any](ctx context.Context, operation string,
 // LogWorkRequestDuration logs the server-reported duration (TimeFinished – TimeStarted) for a work request.
 func LogWorkRequestDuration(ctx context.Context, operation string, wr ociwr.WorkRequest) {
 	logger := log.FromContext(ctx)
+	metrics.RecordWorkRequestOutcome(operation, string(wr.Status))
 	if wr.TimeStarted == nil || wr.TimeFinished == nil {
 		return // No server duration available
 	}

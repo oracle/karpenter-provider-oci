@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/oracle/karpenter-provider-oci/pkg/cache"
+	ocimetrics "github.com/oracle/karpenter-provider-oci/pkg/metrics"
 	"github.com/oracle/karpenter-provider-oci/pkg/oci"
 	"github.com/oracle/karpenter-provider-oci/pkg/operator/options"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/blockstorage"
@@ -91,6 +92,9 @@ func createOperator(ctx context.Context, coreOp *operator.Operator,
 	ociOptions *options.Options, region string,
 	inputOciClient *oci.Client, clientSet kubernetes.Interface, restConfig *rest.Config,
 	provider AuthConfigProvider) (context.Context, *Operator) {
+
+	ocimetrics.RecordVcnIPNativeEnabled(ociOptions.OciVcnIpNative)
+	lo.Must0(coreOp.Add(&leaderNodeMetric{nodeName: os.Getenv(nodeNameEnvVar)}))
 
 	var configProvider common.ConfigurationProvider
 	shapeMetaFile := ociOptions.ShapeMetaFile
