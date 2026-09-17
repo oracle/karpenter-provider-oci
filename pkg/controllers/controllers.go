@@ -11,8 +11,10 @@ import (
 	"context"
 
 	"github.com/awslabs/operatorpkg/controller"
+	"github.com/oracle/karpenter-provider-oci/pkg/controllers/capacitydiscovery"
 	"github.com/oracle/karpenter-provider-oci/pkg/controllers/nodeclasses"
 	"github.com/oracle/karpenter-provider-oci/pkg/controllers/orphaninstance"
+	discovery "github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacityreservation"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/clusterplacementgroup"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/computecluster"
@@ -44,6 +46,7 @@ func NewControllers(
 	compartmentProvider identity.Provider,
 	clusterPlacementGroupProvider clusterplacementgroup.Provider,
 	cloudProvider cloudprovider.CloudProvider,
+	capacityProvider discovery.Recorder,
 ) []controller.Controller {
 	var controllers []controller.Controller
 
@@ -52,7 +55,16 @@ func NewControllers(
 		computeClusterProvider, compartmentProvider, clusterPlacementGroupProvider))
 
 	orphanInstanceController := orphaninstance.NewController(ctx, kubeClient, clientSet, cloudProvider)
+
 	controllers = append(controllers, nodeClassController, orphanInstanceController)
+
+	// Feeds memory observed on registered nodes back into the instance type model, so a launch
+	// that turns out too small corrects the next one instead of repeating indefinitely. Skipped
+	// entirely when capacity discovery is switched off: otherwise it would keep watching nodes and
+	// reading NodeClaims and NodeClasses to produce measurements nothing would store.
+	if capacityProvider.Enabled() {
+		controllers = append(controllers, capacitydiscovery.NewController(kubeClient, cloudProvider, capacityProvider))
+	}
 
 	return controllers
 }

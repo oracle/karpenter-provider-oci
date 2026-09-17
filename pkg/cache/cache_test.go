@@ -221,3 +221,54 @@ func TestOnEvicted(t *testing.T) {
 	assert.Equal(t, []string{"key"}, evictedKeys)
 	assert.Equal(t, []string{"second"}, evictedValues)
 }
+
+// A reader that must stay off the slow path must not be put back on it by someone else's request.
+// GetOrLoad serialises loads per key on its own mutex; GetCached must not take that mutex, so a
+// load already in flight cannot hold up a cached read - of that key or any other.
+func TestGetOrLoadCache_GetCachedDoesNotWaitOnAnInFlightLoad(t *testing.T) {
+	c := NewGetOrLoadCache[string](time.Minute, time.Minute)
+	c.Set("warm", "already here")
+
+	loading := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+
+	// Both goroutines are released and joined however this test ends. Under the regression this
+	// looks for the reader is blocked, so without this a failure would leave it running past the
+	// end of the test and calling t.Error on a finished test.
+	returned := make(chan struct{})
+	var releaseOnce sync.Once
+	defer func() {
+		releaseOnce.Do(func() { close(release) })
+		<-done
+		<-returned
+	}()
+
+	// Hold a load of "slow" open for the duration.
+	go func() {
+		defer close(done)
+		_, _ = c.GetOrLoad(context.Background(), "slow", func(context.Context, string) (string, error) {
+			close(loading)
+			<-release
+			return "eventually", nil
+		})
+	}()
+	<-loading
+
+	// Both a different key and the very key being loaded must answer immediately.
+	go func() {
+		defer close(returned)
+		if v, ok := c.GetCached(context.Background(), "warm"); !ok || v != "already here" {
+			t.Errorf("cached read gave %q, %v", v, ok)
+		}
+		if _, ok := c.GetCached(context.Background(), "slow"); ok {
+			t.Error("the in-flight load has not stored anything yet, so this must miss")
+		}
+	}()
+
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		t.Error("GetCached blocked behind another caller's in-flight load")
+	}
+}

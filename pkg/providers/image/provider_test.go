@@ -15,11 +15,14 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
+	"github.com/oracle/karpenter-provider-oci/pkg/cache"
 	"github.com/oracle/karpenter-provider-oci/pkg/fakes"
+	"github.com/oracle/karpenter-provider-oci/pkg/utils"
 	"github.com/oracle/oci-go-sdk/v65/common"
 	ocicore "github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"k8s.io/utils/set"
 )
 
@@ -190,7 +193,7 @@ func TestListShapesForImage(t *testing.T) {
 		},
 	}
 
-	shapes, err := provider.listShapesForImage(ctx, "ocid1.image.123")
+	shapes, err := provider.listShapesForImage(ctx, "ocid1.image.123", false)
 
 	assert.NoError(t, err)
 	assert.Equal(t, set.New("VM.Standard2.1", "VM.Standard2.2"), shapes)
@@ -448,7 +451,7 @@ func TestFilterImage(t *testing.T) {
 			close(startCh)
 			provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
 
-			images, err := provider.filterImage(ctx, tt.imageType, tt.filter)
+			images, err := provider.filterImage(ctx, tt.imageType, tt.filter, false)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -621,7 +624,7 @@ func TestFilterAndSortImages(t *testing.T) {
 		ImageType: v1beta1.OKEImage,
 	}
 
-	filtered, err := provider.filterAndSortImages(ctx, images, imageCfg)
+	filtered, err := provider.filterAndSortImages(ctx, images, imageCfg, false)
 
 	assert.NoError(t, err)
 	assert.Len(t, filtered, 2)
@@ -676,7 +679,7 @@ func TestExtractKubeletVersionFromPreBakedImage(t *testing.T) {
 			provider, err := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
 			assert.NoError(t, err)
 
-			result, err := provider.extractKubeletVersionFromPreBakedImage(ctx, tt.image)
+			result, err := provider.extractKubeletVersionFromPreBakedImage(ctx, tt.image, false)
 
 			if tt.hasError {
 				assert.Error(t, err)
@@ -765,7 +768,7 @@ func TestExtractKubeletVersionFromPreBakedImage_BaseImageLookup(t *testing.T) {
 		return ocicore.GetImageResponse{}, errors.New("unexpected image id")
 	}
 
-	got, err := provider.extractKubeletVersionFromPreBakedImage(ctx, child)
+	got, err := provider.extractKubeletVersionFromPreBakedImage(ctx, child, false)
 	assert.NoError(t, err)
 	assert.Equal(t, &semver.Version{Major: 1, Minor: 26, Patch: 3}, got)
 }
@@ -809,7 +812,7 @@ func TestExtractKubeletVersionFromPreBakedImage_DeepChain(t *testing.T) {
 		return ocicore.GetImageResponse{Image: img}, nil
 	}
 
-	got, err := provider.extractKubeletVersionFromPreBakedImage(ctx, child)
+	got, err := provider.extractKubeletVersionFromPreBakedImage(ctx, child, false)
 	assert.NoError(t, err)
 	assert.Equal(t, &semver.Version{Major: 1, Minor: 27, Patch: 4}, got)
 }
@@ -852,7 +855,7 @@ func TestExtractKubeletVersionFromPreBakedImage_NotFoundInChain(t *testing.T) {
 		return ocicore.GetImageResponse{Image: img}, nil
 	}
 
-	got, err := provider.extractKubeletVersionFromPreBakedImage(ctx, child)
+	got, err := provider.extractKubeletVersionFromPreBakedImage(ctx, child, false)
 	assert.Error(t, err)
 	assert.Nil(t, got)
 	assert.Contains(t, err.Error(), "missing k8s_version tag")
@@ -876,13 +879,13 @@ func TestGetImageCaching(t *testing.T) {
 	}
 
 	// First call
-	image1, err := provider.getImage(ctx, "ocid1.image.123")
+	image1, err := provider.getImage(ctx, "ocid1.image.123", false)
 	assert.NoError(t, err)
 	assert.Equal(t, "ocid1.image.123", *image1.Id)
 	assert.Equal(t, 1, fakeClient.GetImageCount.Get())
 
 	// Second call with same OCID should hit cache
-	image2, err := provider.getImage(ctx, "ocid1.image.123")
+	image2, err := provider.getImage(ctx, "ocid1.image.123", false)
 	assert.NoError(t, err)
 	assert.Equal(t, "ocid1.image.123", *image2.Id)
 	assert.Equal(t, 1, fakeClient.GetImageCount.Get()) // Should still be 1
@@ -902,13 +905,13 @@ func TestListShapesForImageCaching(t *testing.T) {
 	}
 
 	// First call
-	shapes1, err := provider.listShapesForImage(ctx, "ocid1.image.123")
+	shapes1, err := provider.listShapesForImage(ctx, "ocid1.image.123", false)
 	assert.NoError(t, err)
 	assert.True(t, shapes1.Has("VM.Standard2.1"))
 	assert.Equal(t, 1, fakeClient.ListImageShapeCompatibilityEntriesCount.Get())
 
 	// Second call with same OCID should hit cache
-	shapes2, err := provider.listShapesForImage(ctx, "ocid1.image.123")
+	shapes2, err := provider.listShapesForImage(ctx, "ocid1.image.123", false)
 	assert.NoError(t, err)
 	assert.True(t, shapes2.Has("VM.Standard2.1"))
 	assert.Equal(t, 1, fakeClient.ListImageShapeCompatibilityEntriesCount.Get()) // Should still be 1
@@ -936,13 +939,13 @@ func TestFilterImageCaching(t *testing.T) {
 	}
 
 	// First call
-	images1, err := provider.filterImage(ctx, v1beta1.Platform, filter)
+	images1, err := provider.filterImage(ctx, v1beta1.Platform, filter, false)
 	assert.NoError(t, err)
 	assert.Len(t, images1, 1)
 	assert.Equal(t, 1, fakeClient.ListImagesCount.Get())
 
 	// Second call with identical filter should hit cache
-	images2, err := provider.filterImage(ctx, v1beta1.Platform, filter)
+	images2, err := provider.filterImage(ctx, v1beta1.Platform, filter, false)
 	assert.NoError(t, err)
 	assert.Len(t, images2, 1)
 	assert.Equal(t, 1, fakeClient.ListImagesCount.Get()) // Should still be 1
@@ -974,7 +977,7 @@ func TestFilterAndSortImages_K8sVersionMissing(t *testing.T) {
 	}
 
 	// Should return error when k8sVersion is nil but images are pre-baked
-	_, err := provider.filterAndSortImages(ctx, images, imageCfg)
+	_, err := provider.filterAndSortImages(ctx, images, imageCfg, false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot detect cluster version")
 }
@@ -1028,7 +1031,7 @@ func TestFilterAndSortImages_ExtractVersionError(t *testing.T) {
 	}
 
 	// Should filter out the image with missing k8s_version tag and return empty list
-	filtered, err := provider.filterAndSortImages(ctx, images, imageCfg)
+	filtered, err := provider.filterAndSortImages(ctx, images, imageCfg, false)
 	assert.NoError(t, err)
 	assert.Len(t, filtered, 0) // Image should be filtered out due to missing k8s_version
 }
@@ -1085,4 +1088,610 @@ func TestListAndFilterImages_Pagination(t *testing.T) {
 	assert.Len(t, images, 2) // Should get images from both pages
 	assert.Equal(t, "ocid1.image.123", *images[0].Id)
 	assert.Equal(t, "ocid1.image.456", *images[1].Id)
+}
+
+// A shape that none of the configured images covers must say so, and name the shape - this is
+// what ends up in the NodeClass's ImageReady condition when a user's images do not cover what
+// they asked to launch.
+func TestResolveImageForShape_NoCompatibleImageIsReported(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+
+	fakeClient.GetImageResp = ocicore.GetImageResponse{
+		Image: ocicore.Image{
+			Id:              lo.ToPtr("ocid1.image.arm"),
+			DisplayName:     lo.ToPtr("arm-image"),
+			TimeCreated:     &common.SDKTime{Time: time.Now()},
+			OperatingSystem: lo.ToPtr("Oracle Linux"),
+		},
+	}
+	// The one candidate image supports an ARM shape only.
+	fakeClient.OnListImageShapeCompatibilityEntries = func(context.Context,
+		ocicore.ListImageShapeCompatibilityEntriesRequest) (ocicore.ListImageShapeCompatibilityEntriesResponse,
+		error) {
+		return ocicore.ListImageShapeCompatibilityEntriesResponse{
+			Items: []ocicore.ImageShapeCompatibilitySummary{{Shape: lo.ToPtr("VM.Standard.A1.Flex")}},
+		}, nil
+	}
+
+	_, err := provider.ResolveImageForShape(ctx,
+		&v1beta1.ImageConfig{ImageId: lo.ToPtr("ocid1.image.arm")}, "VM.Standard.E5.Flex")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no image suitable for shape")
+	assert.Contains(t, err.Error(), "VM.Standard.E5.Flex", "the error should name the shape asked for")
+}
+
+// A failing service must surface its own error rather than being reported as though no image
+// covered the shape - the two need different things from whoever reads the condition.
+func TestResolveImageForShape_ServiceFailureSurfacesItsOwnError(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+
+	fakeClient.GetImageResp = ocicore.GetImageResponse{
+		Image: ocicore.Image{
+			Id:              lo.ToPtr("ocid1.image.789"),
+			DisplayName:     lo.ToPtr("test-image"),
+			TimeCreated:     &common.SDKTime{Time: time.Now()},
+			OperatingSystem: lo.ToPtr("Oracle Linux"),
+		},
+	}
+	fakeClient.OnListImageShapeCompatibilityEntries = func(context.Context,
+		ocicore.ListImageShapeCompatibilityEntriesRequest) (ocicore.ListImageShapeCompatibilityEntriesResponse,
+		error) {
+		return ocicore.ListImageShapeCompatibilityEntriesResponse{}, errors.New("service unavailable")
+	}
+
+	_, err := provider.ResolveImageForShape(ctx,
+		&v1beta1.ImageConfig{ImageId: lo.ToPtr("ocid1.image.789")}, "VM.Standard.E5.Flex")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "service unavailable")
+	assert.NotContains(t, err.Error(), "no image suitable for shape")
+}
+
+// A configuration that cannot yield an image must fail with a message saying which way it is
+// wrong, since that message is what the user sees on the NodeClass.
+func TestResolveImages_ConfigurationErrorsAreDescriptive(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+
+	for name, tt := range map[string]struct {
+		cfg  *v1beta1.ImageConfig
+		want string
+	}{
+		// A present-but-empty config selects nothing, which is caught further in than a nil one.
+		"neither id nor filter": {&v1beta1.ImageConfig{}, "no image available"},
+		"both id and filter": {&v1beta1.ImageConfig{
+			ImageId:     lo.ToPtr("ocid1.image.123"),
+			ImageFilter: &v1beta1.ImageSelectorTerm{OsFilter: "Oracle Linux"},
+		}, "cannot define image ocid and image filter together"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := provider.ResolveImages(ctx, tt.cfg)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+
+	// A nil configuration is the "neither" case by another route.
+	_, err := provider.ResolveImages(ctx, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "either image ocid or image filter is required")
+
+	// A filter that matches nothing empties the candidate list before any filtering happens.
+	fakeClient.ListImagesResp = ocicore.ListImagesResponse{}
+	_, err = provider.ResolveImages(ctx, &v1beta1.ImageConfig{
+		ImageFilter: &v1beta1.ImageSelectorTerm{OsFilter: "No Such OS"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no image available")
+}
+
+// The selection can also empty out later, when candidate images are dropped for being
+// incompatible with the cluster version. That must fail rather than return nothing.
+func TestResolveImages_FilteredToNothingIsAnError(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider.k8sVersion = semver.New("1.30.0")
+
+	// OKE images are matched, but none carries a kubelet version, so all are dropped.
+	fakeClient.ListImagesResp = ocicore.ListImagesResponse{
+		Items: []ocicore.Image{
+			{
+				Id:              lo.ToPtr("ocid1.image.untagged"),
+				DisplayName:     lo.ToPtr("untagged-image"),
+				TimeCreated:     &common.SDKTime{Time: time.Now()},
+				OperatingSystem: lo.ToPtr("Oracle Linux"),
+			},
+		},
+	}
+
+	_, err := provider.ResolveImages(ctx, &v1beta1.ImageConfig{
+		ImageType:   v1beta1.OKEImage,
+		ImageFilter: &v1beta1.ImageSelectorTerm{OsFilter: "Oracle Linux"},
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no image match")
+}
+
+// The cached-only path must make no API call at all, whatever the cache state.
+func TestResolveImageForShapeCached_NeverCallsOCI(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+
+	cfg := &v1beta1.ImageConfig{ImageId: lo.ToPtr("ocid1.image.123")}
+
+	_, ok := provider.ResolveImageForShapeCached(ctx, cfg, "VM.Standard2.1")
+
+	assert.False(t, ok, "a cold cache has no answer")
+	assert.Equal(t, 0, fakeClient.GetImageCount.Get(), "no image lookup may be issued")
+	assert.Equal(t, 0, fakeClient.ListImageShapeCompatibilityEntriesCount.Get(),
+		"no shape-compatibility lookup may be issued")
+}
+
+// And once a launch has warmed the cache, the cached path must name the same image the launch
+// would - it runs the same selection, so a node is modelled against the image it will actually
+// boot. Diverging here would file measurements under a key no node ever used.
+func TestResolveImageForShapeCached_AgreesWithLaunch(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+
+	fakeClient.GetImageResp = ocicore.GetImageResponse{
+		Image: ocicore.Image{
+			Id:              lo.ToPtr("ocid1.image.123"),
+			DisplayName:     lo.ToPtr("test-image"),
+			TimeCreated:     &common.SDKTime{Time: time.Now()},
+			OperatingSystem: lo.ToPtr("Oracle Linux"),
+		},
+	}
+	fakeClient.OnListImageShapeCompatibilityEntries = func(context.Context,
+		ocicore.ListImageShapeCompatibilityEntriesRequest) (ocicore.ListImageShapeCompatibilityEntriesResponse,
+		error) {
+		return ocicore.ListImageShapeCompatibilityEntriesResponse{
+			Items: []ocicore.ImageShapeCompatibilitySummary{{Shape: lo.ToPtr("VM.Standard2.1")}},
+		}, nil
+	}
+
+	cfg := &v1beta1.ImageConfig{ImageId: lo.ToPtr("ocid1.image.123")}
+
+	// Cold: declines.
+	_, ok := provider.ResolveImageForShapeCached(ctx, cfg, "VM.Standard2.1")
+	require.False(t, ok)
+
+	// A launch resolves it for real, warming both caches.
+	launched, err := provider.ResolveImageForShape(ctx, cfg, "VM.Standard2.1")
+	require.NoError(t, err)
+	require.Len(t, launched.Images, 1)
+
+	// Warm: same answer, and still no further API calls.
+	getsAfterLaunch := fakeClient.GetImageCount.Get()
+	shapesAfterLaunch := fakeClient.ListImageShapeCompatibilityEntriesCount.Get()
+
+	cached, ok := provider.ResolveImageForShapeCached(ctx, cfg, "VM.Standard2.1")
+
+	require.True(t, ok, "what a launch resolved must be readable from cache afterwards")
+	require.Len(t, cached.Images, 1)
+	assert.Equal(t, *launched.Images[0].Id, *cached.Images[0].Id,
+		"the cached path must select exactly what a launch selects")
+	assert.Equal(t, getsAfterLaunch, fakeClient.GetImageCount.Get())
+	assert.Equal(t, shapesAfterLaunch, fakeClient.ListImageShapeCompatibilityEntriesCount.Get())
+}
+
+// A shape no cached image covers is a settled answer, not a miss to go and check.
+func TestResolveImageForShapeCached_WarmButNoCompatibleImage(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+
+	fakeClient.GetImageResp = ocicore.GetImageResponse{
+		Image: ocicore.Image{
+			Id:              lo.ToPtr("ocid1.image.arm"),
+			DisplayName:     lo.ToPtr("arm-image"),
+			TimeCreated:     &common.SDKTime{Time: time.Now()},
+			OperatingSystem: lo.ToPtr("Oracle Linux"),
+		},
+	}
+	fakeClient.OnListImageShapeCompatibilityEntries = func(context.Context,
+		ocicore.ListImageShapeCompatibilityEntriesRequest) (ocicore.ListImageShapeCompatibilityEntriesResponse,
+		error) {
+		return ocicore.ListImageShapeCompatibilityEntriesResponse{
+			Items: []ocicore.ImageShapeCompatibilitySummary{{Shape: lo.ToPtr("VM.Standard.A1.Flex")}},
+		}, nil
+	}
+
+	cfg := &v1beta1.ImageConfig{ImageId: lo.ToPtr("ocid1.image.arm")}
+
+	// Warm both caches for this configuration via a real resolution of the ARM shape.
+	_, err := provider.ResolveImageForShape(ctx, cfg, "VM.Standard.A1.Flex")
+	require.NoError(t, err)
+
+	before := fakeClient.ListImageShapeCompatibilityEntriesCount.Get()
+
+	_, ok := provider.ResolveImageForShapeCached(ctx, cfg, "VM.Standard.E5.Flex")
+
+	assert.False(t, ok, "cached and incompatible is still no answer for the caller")
+	assert.Equal(t, before, fakeClient.ListImageShapeCompatibilityEntriesCount.Get(),
+		"and it must not go asking")
+}
+
+// Selection drops images whose kubelet version cannot be read, and reading it can mean walking the
+// base-image chain. If part of that chain is uncached, the cached-only pass would see a shorter
+// candidate list than a launch does and could pick a different image. It must abandon instead:
+// no answer is safe, a different answer is not.
+func TestResolveImageForShapeCached_PartialChainDeclinesRatherThanReselects(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider.k8sVersion = semver.New("1.30.0")
+
+	filter := v1beta1.ImageSelectorTerm{OsFilter: "Oracle Linux"}
+	cfg := &v1beta1.ImageConfig{ImageType: v1beta1.OKEImage, ImageFilter: &filter}
+
+	// Newest image carries no kubelet tag, so its version can only come from its base image.
+	untagged := &ocicore.Image{
+		Id: lo.ToPtr("ocid1.image.untagged"), DisplayName: lo.ToPtr("untagged"),
+		TimeCreated:     &common.SDKTime{Time: time.Now()},
+		OperatingSystem: lo.ToPtr("Oracle Linux"), BaseImageId: lo.ToPtr("ocid1.image.base"),
+	}
+	tagged := &ocicore.Image{
+		Id: lo.ToPtr("ocid1.image.tagged"), DisplayName: lo.ToPtr("tagged"),
+		TimeCreated:     &common.SDKTime{Time: time.Now().Add(-time.Hour)},
+		OperatingSystem: lo.ToPtr("Oracle Linux"),
+		FreeformTags:    map[string]string{"k8s_version": "1.30.0"},
+	}
+
+	// The filter result is cached, but the base image it depends on is not.
+	key, err := utils.HashFor(filter)
+	require.NoError(t, err)
+	provider.imageFilterCache.Set(key, []*ocicore.Image{untagged, tagged})
+
+	// The older image is fully cached and compatible, so if the pass were to skip the one it
+	// cannot read it would happily return this instead - a different image than a launch picks.
+	provider.imageShapeCache.Set("ocid1.image.tagged", set.New("VM.Standard2.1"))
+
+	resolved, ok := provider.ResolveImageForShapeCached(ctx, cfg, "VM.Standard2.1")
+
+	assert.False(t, ok, "an incomplete chain must yield no answer, not a re-selected one")
+	assert.Nil(t, resolved)
+	assert.Equal(t, 0, fakeClient.GetImageCount.Get(), "and it must not fetch the missing link")
+}
+
+// The realistic partial state: the NodeClass reconciler refreshes image lookups every few minutes,
+// but shape compatibility is only cached by an actual launch. So the image is very often cached
+// while its shape compatibility is not, and that must still produce no answer and no API call.
+func TestResolveImageForShapeCached_ImageCachedButShapeNot(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+
+	provider.imageOcidCache.Set("ocid1.image.123", &ocicore.Image{
+		Id: lo.ToPtr("ocid1.image.123"), DisplayName: lo.ToPtr("test-image"),
+		TimeCreated:     &common.SDKTime{Time: time.Now()},
+		OperatingSystem: lo.ToPtr("Oracle Linux"),
+	})
+
+	cfg := &v1beta1.ImageConfig{ImageId: lo.ToPtr("ocid1.image.123")}
+
+	_, ok := provider.ResolveImageForShapeCached(ctx, cfg, "VM.Standard2.1")
+
+	assert.False(t, ok, "the image is known but its shape compatibility is not")
+	assert.Equal(t, 0, fakeClient.ListImageShapeCompatibilityEntriesCount.Get(),
+		"and compatibility must not be fetched to find out")
+	assert.Equal(t, 0, fakeClient.GetImageCount.Get())
+}
+
+// With both halves warm, the answer comes back with no API call at all.
+func TestResolveImageForShapeCached_BothHalvesWarm(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+
+	provider.imageOcidCache.Set("ocid1.image.123", &ocicore.Image{
+		Id: lo.ToPtr("ocid1.image.123"), DisplayName: lo.ToPtr("test-image"),
+		TimeCreated:     &common.SDKTime{Time: time.Now()},
+		OperatingSystem: lo.ToPtr("Oracle Linux"),
+	})
+	provider.imageShapeCache.Set("ocid1.image.123", set.New("VM.Standard2.1"))
+
+	resolved, ok := provider.ResolveImageForShapeCached(ctx,
+		&v1beta1.ImageConfig{ImageId: lo.ToPtr("ocid1.image.123")}, "VM.Standard2.1")
+
+	require.True(t, ok)
+	require.Len(t, resolved.Images, 1)
+	assert.Equal(t, "ocid1.image.123", *resolved.Images[0].Id)
+	assert.Equal(t, 0, fakeClient.GetImageCount.Get())
+	assert.Equal(t, 0, fakeClient.ListImageShapeCompatibilityEntriesCount.Get())
+}
+
+// The filter half of the configuration needs the same treatment as the ocid half: an uncached
+// filter must decline rather than go and list images.
+func TestResolveImageForShapeCached_UncachedFilterDeclines(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+
+	cfg := &v1beta1.ImageConfig{
+		ImageFilter: &v1beta1.ImageSelectorTerm{OsFilter: "Oracle Linux"},
+	}
+
+	_, ok := provider.ResolveImageForShapeCached(ctx, cfg, "VM.Standard2.1")
+
+	assert.False(t, ok)
+	assert.Equal(t, 0, fakeClient.ListImagesCount.Get(), "no image listing may be issued")
+}
+
+// The equivalence that matters is on the full selection path, not the trivial one: a filter that
+// returns several images, kubelet-version scoring against the cluster, and a base-image chain
+// walked more than one level deep. Whatever a launch picks out of that, the cached pass must pick
+// the same - it is the key a measurement gets filed under.
+func TestResolveImageForShapeCached_AgreesWithLaunchOnTheFullPath(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider.k8sVersion = semver.New("1.30.0")
+
+	now := time.Now()
+	// Two levels from the image that carries the version tag, and deliberately NOT the newest:
+	// selection must be driven by version skew, so recency alone would pick the wrong one.
+	grandchild := ocicore.Image{
+		Id: lo.ToPtr("ocid1.image.grandchild"), DisplayName: lo.ToPtr("grandchild"),
+		TimeCreated:     &common.SDKTime{Time: now.Add(-time.Minute)},
+		OperatingSystem: lo.ToPtr("Oracle Linux"), CompartmentId: lo.ToPtr("prebaked-comp"),
+		BaseImageId: lo.ToPtr("ocid1.image.child"),
+	}
+	child := ocicore.Image{
+		Id: lo.ToPtr("ocid1.image.child"), DisplayName: lo.ToPtr("child"),
+		TimeCreated:     &common.SDKTime{Time: now.Add(-time.Hour)},
+		OperatingSystem: lo.ToPtr("Oracle Linux"), CompartmentId: lo.ToPtr("prebaked-comp"),
+		BaseImageId: lo.ToPtr("ocid1.image.root"),
+	}
+	root := ocicore.Image{
+		Id: lo.ToPtr("ocid1.image.root"), DisplayName: lo.ToPtr("root"),
+		TimeCreated:     &common.SDKTime{Time: now.Add(-2 * time.Hour)},
+		OperatingSystem: lo.ToPtr("Oracle Linux"), CompartmentId: lo.ToPtr("prebaked-comp"),
+		FreeformTags: map[string]string{"k8s_version": "1.30.0"},
+	}
+	// Newer, directly tagged, but three minor versions behind the cluster - so it scores worse and
+	// must lose, even though it sorts first by creation time.
+	newerButWorseScoring := ocicore.Image{
+		Id: lo.ToPtr("ocid1.image.newer"), DisplayName: lo.ToPtr("newer"),
+		TimeCreated:     &common.SDKTime{Time: now},
+		OperatingSystem: lo.ToPtr("Oracle Linux"), CompartmentId: lo.ToPtr("prebaked-comp"),
+		FreeformTags: map[string]string{"k8s_version": "1.27.0"},
+	}
+
+	fakeClient.ListImagesResp = ocicore.ListImagesResponse{
+		Items: []ocicore.Image{newerButWorseScoring, grandchild},
+	}
+	fakeClient.OnGetImage = func(_ context.Context,
+		req ocicore.GetImageRequest) (ocicore.GetImageResponse, error) {
+		switch *req.ImageId {
+		case "ocid1.image.child":
+			return ocicore.GetImageResponse{Image: child}, nil
+		case "ocid1.image.root":
+			return ocicore.GetImageResponse{Image: root}, nil
+		}
+		return ocicore.GetImageResponse{}, errors.New("unexpected image")
+	}
+	fakeClient.OnListImageShapeCompatibilityEntries = func(context.Context,
+		ocicore.ListImageShapeCompatibilityEntriesRequest) (ocicore.ListImageShapeCompatibilityEntriesResponse,
+		error) {
+		return ocicore.ListImageShapeCompatibilityEntriesResponse{
+			Items: []ocicore.ImageShapeCompatibilitySummary{{Shape: lo.ToPtr("VM.Standard2.1")}},
+		}, nil
+	}
+
+	cfg := &v1beta1.ImageConfig{
+		ImageType:   v1beta1.OKEImage,
+		ImageFilter: &v1beta1.ImageSelectorTerm{OsFilter: "Oracle Linux"},
+	}
+
+	// What a launch selects, warming every cache it touches on the way.
+	launched, err := provider.ResolveImageForShape(ctx, cfg, "VM.Standard2.1")
+	require.NoError(t, err)
+	require.Len(t, launched.Images, 1)
+
+	gets := fakeClient.GetImageCount.Get()
+	lists := fakeClient.ListImagesCount.Get()
+	shapes := fakeClient.ListImageShapeCompatibilityEntriesCount.Get()
+
+	cached, ok := provider.ResolveImageForShapeCached(ctx, cfg, "VM.Standard2.1")
+
+	// The launch must have chosen on skew, not recency - otherwise the equivalence below is vacuous.
+	require.Equal(t, "ocid1.image.grandchild", *launched.Images[0].Id,
+		"the chain-resolved image scores best, so it wins despite not being newest")
+
+	require.True(t, ok, "everything a launch touched is now cached")
+	require.Len(t, cached.Images, 1)
+	assert.Equal(t, "ocid1.image.grandchild", *cached.Images[0].Id,
+		"filter ordering, kubelet scoring and the base-image chain must all reach the same image")
+	assert.Equal(t, gets, fakeClient.GetImageCount.Get(), "and none of it may be refetched")
+	assert.Equal(t, lists, fakeClient.ListImagesCount.Get())
+	assert.Equal(t, shapes, fakeClient.ListImageShapeCompatibilityEntriesCount.Get())
+}
+
+// The base-image walk recurses, so cached-only has to hold all the way down. Cache the first link
+// but not the second: if the recursive call dropped the flag it would fetch the missing root,
+// succeed, and hand back an image the pass had no right to resolve.
+func TestResolveImageForShapeCached_DeepChainStaysCachedOnly(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+	provider.k8sVersion = semver.New("1.30.0")
+
+	now := time.Now()
+	grandchild := &ocicore.Image{
+		Id: lo.ToPtr("ocid1.image.grandchild"), DisplayName: lo.ToPtr("grandchild"),
+		TimeCreated:     &common.SDKTime{Time: now},
+		OperatingSystem: lo.ToPtr("Oracle Linux"), CompartmentId: lo.ToPtr("prebaked-comp"),
+		BaseImageId: lo.ToPtr("ocid1.image.child"),
+	}
+	child := &ocicore.Image{
+		Id: lo.ToPtr("ocid1.image.child"), DisplayName: lo.ToPtr("child"),
+		TimeCreated:     &common.SDKTime{Time: now.Add(-time.Hour)},
+		OperatingSystem: lo.ToPtr("Oracle Linux"), CompartmentId: lo.ToPtr("prebaked-comp"),
+		BaseImageId: lo.ToPtr("ocid1.image.root"),
+	}
+	// root carries the version tag but is deliberately never cached.
+	fakeClient.OnGetImage = func(_ context.Context,
+		_ ocicore.GetImageRequest) (ocicore.GetImageResponse, error) {
+		return ocicore.GetImageResponse{Image: ocicore.Image{
+			Id: lo.ToPtr("ocid1.image.root"), DisplayName: lo.ToPtr("root"),
+			TimeCreated:     &common.SDKTime{Time: now.Add(-2 * time.Hour)},
+			OperatingSystem: lo.ToPtr("Oracle Linux"),
+			FreeformTags:    map[string]string{"k8s_version": "1.30.0"},
+		}}, nil
+	}
+
+	filter := v1beta1.ImageSelectorTerm{OsFilter: "Oracle Linux"}
+	key, err := utils.HashFor(filter)
+	require.NoError(t, err)
+	provider.imageFilterCache.Set(key, []*ocicore.Image{grandchild})
+	provider.imageOcidCache.Set("ocid1.image.child", child) // first link cached, root is not
+	provider.imageShapeCache.Set("ocid1.image.grandchild", set.New("VM.Standard2.1"))
+
+	resolved, ok := provider.ResolveImageForShapeCached(ctx,
+		&v1beta1.ImageConfig{ImageType: v1beta1.OKEImage, ImageFilter: &filter}, "VM.Standard2.1")
+
+	assert.False(t, ok, "the chain is incomplete, so there is no answer to give")
+	assert.Nil(t, resolved)
+	assert.Equal(t, 0, fakeClient.GetImageCount.Get(),
+		"the uncached link must not be fetched to complete the walk")
+}
+
+// Compatibility is checked candidate by candidate in rank order, so an unknown answer for an
+// earlier candidate is not the same as a negative one: the earlier candidate might well be the one
+// a launch picks. Falling through to a later candidate would hand back an image the launch would
+// not have chosen, and discovery would key measurements against it. Decline instead.
+func TestResolveImageForShapeCached_UnknownCompatibilityDoesNotPromoteALaterCandidate(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := &fakes.FakeCompute{}
+	startCh := make(chan struct{})
+	close(startCh)
+	provider, _ := NewProvider(ctx, nil, fakeClient, "prebaked-comp", "cio-comp", startCh)
+
+	now := time.Now()
+	// Ranked first by recency, and its shape compatibility is deliberately not cached.
+	preferred := &ocicore.Image{
+		Id: lo.ToPtr("ocid1.image.preferred"), DisplayName: lo.ToPtr("preferred"),
+		TimeCreated: &common.SDKTime{Time: now}, OperatingSystem: lo.ToPtr("Oracle Linux"),
+	}
+	// Ranked second, fully cached, and compatible - the candidate a fall-through would promote.
+	runnerUp := &ocicore.Image{
+		Id: lo.ToPtr("ocid1.image.runner-up"), DisplayName: lo.ToPtr("runner-up"),
+		TimeCreated: &common.SDKTime{Time: now.Add(-time.Hour)}, OperatingSystem: lo.ToPtr("Oracle Linux"),
+	}
+
+	filter := v1beta1.ImageSelectorTerm{OsFilter: "Oracle Linux"}
+	key, err := utils.HashFor(filter)
+	require.NoError(t, err)
+	provider.imageFilterCache.Set(key, []*ocicore.Image{preferred, runnerUp})
+	provider.imageShapeCache.Set("ocid1.image.runner-up", set.New("VM.Standard2.1"))
+
+	resolved, ok := provider.ResolveImageForShapeCached(ctx,
+		&v1beta1.ImageConfig{ImageType: v1beta1.Custom, ImageFilter: &filter}, "VM.Standard2.1")
+
+	assert.False(t, ok,
+		"compatibility for the leading candidate is unknown, so there is no answer to give")
+	assert.Nil(t, resolved)
+	assert.Equal(t, 0, fakeClient.ListImageShapeCompatibilityEntriesCount.Get(),
+		"and it must not go asking to break the tie")
+}
+
+// "Missing" and "expired" are the same to the caller, but only expiry exercises the TTL. Expire
+// each half on its own: resolution short-circuits at the first thing it cannot find, so expiring
+// both together would never prove that expired compatibility declines.
+func TestResolveImageForShapeCached_ExpiredInformationDeclines(t *testing.T) {
+	const imageID = "ocid1.image.123"
+
+	newProvider := func(t *testing.T) (*DefaultProvider, *fakes.FakeCompute) {
+		t.Helper()
+
+		fakeClient := &fakes.FakeCompute{}
+		startCh := make(chan struct{})
+		close(startCh)
+		provider, _ := NewProvider(context.Background(), nil, fakeClient,
+			"prebaked-comp", "cio-comp", startCh)
+
+		return provider, fakeClient
+	}
+	warmImage := func(p *DefaultProvider) {
+		p.imageOcidCache.Set(imageID, &ocicore.Image{
+			Id: lo.ToPtr(imageID), DisplayName: lo.ToPtr("test-image"),
+			TimeCreated: &common.SDKTime{Time: time.Now()}, OperatingSystem: lo.ToPtr("Oracle Linux"),
+		})
+	}
+	cfg := &v1beta1.ImageConfig{ImageId: lo.ToPtr(imageID)}
+
+	t.Run("the image lookup expires", func(t *testing.T) {
+		provider, fakeClient := newProvider(t)
+		provider.imageOcidCache = cache.NewGetOrLoadCache[*ocicore.Image](20*time.Millisecond, time.Minute)
+		warmImage(provider)
+		// Compatibility stays live, so only the image half can be what declines.
+		provider.imageShapeCache.Set(imageID, set.New("VM.Standard2.1"))
+
+		_, ok := provider.ResolveImageForShapeCached(context.Background(), cfg, "VM.Standard2.1")
+		require.True(t, ok, "warm to begin with")
+
+		time.Sleep(40 * time.Millisecond)
+
+		_, ok = provider.ResolveImageForShapeCached(context.Background(), cfg, "VM.Standard2.1")
+
+		assert.False(t, ok, "an expired image lookup is as good as absent")
+		assert.Equal(t, 0, fakeClient.GetImageCount.Get(), "and must not be refreshed from here")
+	})
+
+	t.Run("the compatibility lookup expires", func(t *testing.T) {
+		provider, fakeClient := newProvider(t)
+		provider.imageShapeCache = cache.NewGetOrLoadCache[set.Set[string]](20*time.Millisecond, time.Minute)
+		// The image stays live, so only compatibility can be what declines.
+		warmImage(provider)
+		provider.imageShapeCache.Set(imageID, set.New("VM.Standard2.1"))
+
+		_, ok := provider.ResolveImageForShapeCached(context.Background(), cfg, "VM.Standard2.1")
+		require.True(t, ok, "warm to begin with")
+
+		time.Sleep(40 * time.Millisecond)
+
+		_, ok = provider.ResolveImageForShapeCached(context.Background(), cfg, "VM.Standard2.1")
+
+		assert.False(t, ok, "expired compatibility is as good as absent")
+		assert.Equal(t, 0, fakeClient.ListImageShapeCompatibilityEntriesCount.Get(),
+			"and must not be refreshed from here")
+	})
 }
