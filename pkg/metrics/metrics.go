@@ -19,14 +19,23 @@ import (
 )
 
 const (
-	CloudProviderSubsystem = "cloudprovider"
-	InstanceTypeLabel      = "instance_type"
-	CapacityTypeLabel      = "capacity_type"
-	ZoneLabel              = "zone"
-	ApiNameLabel           = "api_name"
-	ApiStatusCodeLabel     = "status_code"
-	OperationLabel         = "operation"
-	StatusLabel            = "status"
+	CloudProviderSubsystem  = "cloudprovider"
+	NodeClassLabel          = "nodeclass"
+	NodeNameLabel           = "node_name"
+	InstanceTypeLabel       = "instance_type"
+	CapacityTypeLabel       = "capacity_type"
+	ZoneLabel               = "zone"
+	ShapeLabel              = "shape"
+	AvailabilityDomainLabel = "availability_domain"
+	ResultLabel             = "result"
+	FaultDomainLabel        = "fault_domain"
+	ApiNameLabel            = "api_name"
+	ApiStatusCodeLabel      = "status_code"
+	OperationLabel          = "operation"
+	StatusLabel             = "status"
+
+	ResultSuccess = "success"
+	ResultFailure = "failure"
 
 	// OutcomeLabel carries why capacity discovery did or did not have advice to give. Its values
 	// are a small closed set, so the series stays bounded however many shapes are listed.
@@ -53,6 +62,19 @@ const (
 )
 
 var (
+	NodeClassReady = opmetrics.NewPrometheusGauge(
+		crmetrics.Registry,
+		prometheus.GaugeOpts{
+			Namespace: metrics.Namespace,
+			Subsystem: CloudProviderSubsystem,
+			Name:      "nodeclass_ready",
+			Help:      "Whether an OCINodeClass is ready and has resolved the required OCI dependencies for provisioning.",
+		},
+		[]string{
+			NodeClassLabel,
+		},
+	)
+
 	InstanceTypeOfferingAvailable = opmetrics.NewPrometheusGauge(
 		crmetrics.Registry,
 		prometheus.GaugeOpts{
@@ -130,6 +152,52 @@ var (
 		},
 	)
 
+	InstanceLaunchesCounter = opmetrics.NewPrometheusCounter(
+		crmetrics.Registry,
+		prometheus.CounterOpts{
+			Namespace: metrics.Namespace,
+			Subsystem: CloudProviderSubsystem,
+			Name:      "instance_launches_total",
+			Help:      "Number of OCI instance launch attempts initiated by Karpenter Provider OCI.",
+		},
+		[]string{
+			CapacityTypeLabel,
+			ShapeLabel,
+			AvailabilityDomainLabel,
+			ResultLabel,
+		},
+	)
+
+	CapacityErrorsCounter = opmetrics.NewPrometheusCounter(
+		crmetrics.Registry,
+		prometheus.CounterOpts{
+			Namespace: metrics.Namespace,
+			Subsystem: CloudProviderSubsystem,
+			Name:      "capacity_errors_total",
+			Help:      "Number of OCI capacity-related provisioning failures.",
+		},
+		[]string{
+			CapacityTypeLabel,
+			ShapeLabel,
+			AvailabilityDomainLabel,
+			FaultDomainLabel,
+		},
+	)
+
+	WorkRequestsCounter = opmetrics.NewPrometheusCounter(
+		crmetrics.Registry,
+		prometheus.CounterOpts{
+			Namespace: metrics.Namespace,
+			Subsystem: CloudProviderSubsystem,
+			Name:      "work_requests_total",
+			Help:      "Number of OCI work request outcomes.",
+		},
+		[]string{
+			OperationLabel,
+			StatusLabel,
+		},
+	)
+
 	WorkRequestProcessDuration = opmetrics.NewPrometheusHistogram(
 		crmetrics.Registry,
 		prometheus.HistogramOpts{
@@ -144,7 +212,93 @@ var (
 			StatusLabel,
 		},
 	)
+
+	VcnIPNativeEnabled = opmetrics.NewPrometheusGauge(
+		crmetrics.Registry,
+		prometheus.GaugeOpts{
+			Namespace: metrics.Namespace,
+			Subsystem: CloudProviderSubsystem,
+			Name:      "vcn_ip_native_enabled",
+			Help:      "Whether Karpenter Provider OCI is configured for an OCI VCN IP native cluster.",
+		},
+		[]string{},
+	)
+
+	LeaderNodeInfo = opmetrics.NewPrometheusGauge(
+		crmetrics.Registry,
+		prometheus.GaugeOpts{
+			Namespace: metrics.Namespace,
+			Subsystem: CloudProviderSubsystem,
+			Name:      "leader_node_info",
+			Help:      "Information about the Kubernetes node hosting the elected Karpenter Provider OCI controller. The value is always 1.",
+		},
+		[]string{
+			NodeNameLabel,
+		},
+	)
 )
+
+func boolToFloat64(v bool) float64 {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func RecordNodeClassReady(nodeClass string, ready bool) {
+	NodeClassReady.Set(boolToFloat64(ready), map[string]string{
+		NodeClassLabel: nodeClass,
+	})
+}
+
+func DeleteNodeClassReady(nodeClass string) {
+	NodeClassReady.Delete(map[string]string{
+		NodeClassLabel: nodeClass,
+	})
+}
+
+func RecordInstanceLaunch(capacityType string, shape string,
+	availabilityDomain string, result string) {
+	InstanceLaunchesCounter.Inc(map[string]string{
+		CapacityTypeLabel:       capacityType,
+		ShapeLabel:              shape,
+		AvailabilityDomainLabel: availabilityDomain,
+		ResultLabel:             result,
+	})
+}
+
+func RecordCapacityError(capacityType string, shape string,
+	availabilityDomain string, faultDomain string) {
+	CapacityErrorsCounter.Inc(map[string]string{
+		CapacityTypeLabel:       capacityType,
+		ShapeLabel:              shape,
+		AvailabilityDomainLabel: availabilityDomain,
+		FaultDomainLabel:        faultDomain,
+	})
+}
+
+func RecordWorkRequestOutcome(operation string, status string) {
+	WorkRequestsCounter.Inc(map[string]string{
+		OperationLabel: operation,
+		StatusLabel:    status,
+	})
+}
+
+func RecordVcnIPNativeEnabled(enabled bool) {
+	VcnIPNativeEnabled.Set(boolToFloat64(enabled), map[string]string{})
+}
+
+func RecordLeaderNode(nodeName string) {
+	LeaderNodeInfo.Set(1, map[string]string{
+		NodeNameLabel: nodeName,
+	})
+}
+
+func DeleteLeaderNode(nodeName string) {
+	LeaderNodeInfo.Delete(map[string]string{
+		NodeNameLabel: nodeName,
+	})
+}
 
 func MeasureCallDuration(apiName string) func() time.Duration {
 	start := time.Now()

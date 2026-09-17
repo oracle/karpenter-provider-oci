@@ -20,6 +20,7 @@ import (
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/cache"
 	"github.com/oracle/karpenter-provider-oci/pkg/fakes"
+	"github.com/oracle/karpenter-provider-oci/pkg/metrics"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/image"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/instancemeta"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/instancetype"
@@ -124,6 +125,15 @@ func minimalPlacement() *placement.Proposal {
 }
 
 const testShapeE4Flex = "VM.Standard.E4.Flex"
+
+func metricCounterValue(t *testing.T, name string, labels map[string]string) float64 {
+	t.Helper()
+	m, ok := fakes.FindMetricWithLabelValues(t, name, labels)
+	if !ok {
+		return 0
+	}
+	return m.GetCounter().GetValue()
+}
 
 func TestProvider_BuildDefinedTags(t *testing.T) {
 	tests := []struct {
@@ -1880,6 +1890,19 @@ func TestProvider_LaunchInstance_WorkRequestSuccess(t *testing.T) {
 	}
 
 	placementProposal := minimalPlacement()
+	launchMetricLabels := map[string]string{
+		metrics.CapacityTypeLabel:       corev1.CapacityTypeOnDemand,
+		metrics.ShapeLabel:              "VM.Standard.E4.Flex",
+		metrics.AvailabilityDomainLabel: placementProposal.Ad,
+		metrics.ResultLabel:             metrics.ResultSuccess,
+	}
+	workRequestMetricLabels := map[string]string{
+		metrics.OperationLabel: "LaunchInstance",
+		metrics.StatusLabel:    string(ociwr.WorkRequestStatusSucceeded),
+	}
+	launchMetricBefore := metricCounterValue(t, "instance_launches_total", launchMetricLabels)
+	workRequestMetricBefore := metricCounterValue(t, "work_requests_total", workRequestMetricLabels)
+
 	inst, err := p.LaunchInstance(context.TODO(), minimalNodeClaim(), minimalNodeClass(), it, minimalImageResolve(),
 		minimalNetworkResolve(), nil, placementProposal)
 
@@ -1891,6 +1914,18 @@ func TestProvider_LaunchInstance_WorkRequestSuccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.Same(t, inst, cached)
 	assert.Equal(t, 0, fc.GetCount.Get(), "successful launch should seed the instance cache")
+
+	launchMetric, ok := fakes.FindMetricWithLabelValues(t,
+		"instance_launches_total",
+		launchMetricLabels)
+	assert.True(t, ok)
+	assert.Equal(t, launchMetricBefore+1, launchMetric.GetCounter().GetValue())
+
+	workRequestMetric, ok := fakes.FindMetricWithLabelValues(t,
+		"work_requests_total",
+		workRequestMetricLabels)
+	assert.True(t, ok)
+	assert.Equal(t, workRequestMetricBefore+1, workRequestMetric.GetCounter().GetValue())
 }
 
 func TestProvider_LaunchInstance_WorkRequestOutOfHostCapacity(t *testing.T) {
@@ -1945,11 +1980,39 @@ func TestProvider_LaunchInstance_WorkRequestOutOfHostCapacity(t *testing.T) {
 		Shape: "VM.Standard.E4.Flex",
 	}
 
+	placementProposal := minimalPlacement()
+	launchMetricLabels := map[string]string{
+		metrics.CapacityTypeLabel:       corev1.CapacityTypeOnDemand,
+		metrics.ShapeLabel:              "VM.Standard.E4.Flex",
+		metrics.AvailabilityDomainLabel: placementProposal.Ad,
+		metrics.ResultLabel:             metrics.ResultFailure,
+	}
+	capacityMetricLabels := map[string]string{
+		metrics.CapacityTypeLabel:       corev1.CapacityTypeOnDemand,
+		metrics.ShapeLabel:              "VM.Standard.E4.Flex",
+		metrics.AvailabilityDomainLabel: placementProposal.Ad,
+		metrics.FaultDomainLabel:        lo.FromPtr(placementProposal.Fd),
+	}
+	launchMetricBefore := metricCounterValue(t, "instance_launches_total", launchMetricLabels)
+	capacityMetricBefore := metricCounterValue(t, "capacity_errors_total", capacityMetricLabels)
+
 	_, err = p.LaunchInstance(context.TODO(), minimalNodeClaim(), minimalNodeClass(), it, minimalImageResolve(),
-		minimalNetworkResolve(), nil, minimalPlacement())
+		minimalNetworkResolve(), nil, placementProposal)
 	require.Error(t, err)
 	assert.Equal(t, NoCapacityError{}, err)
 	assert.Equal(t, 1, fwr.ListCount.Get())
+
+	launchMetric, ok := fakes.FindMetricWithLabelValues(t,
+		"instance_launches_total",
+		launchMetricLabels)
+	assert.True(t, ok)
+	assert.Equal(t, launchMetricBefore+1, launchMetric.GetCounter().GetValue())
+
+	capacityMetric, ok := fakes.FindMetricWithLabelValues(t,
+		"capacity_errors_total",
+		capacityMetricLabels)
+	assert.True(t, ok)
+	assert.Equal(t, capacityMetricBefore+1, capacityMetric.GetCounter().GetValue())
 }
 
 func TestProvider_LaunchInstance_Timeout(t *testing.T) {

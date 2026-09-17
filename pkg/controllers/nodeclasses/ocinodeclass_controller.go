@@ -15,6 +15,7 @@ import (
 	"github.com/awslabs/operatorpkg/object"
 	"github.com/awslabs/operatorpkg/reasonable"
 	"github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
+	"github.com/oracle/karpenter-provider-oci/pkg/metrics"
 	"github.com/oracle/karpenter-provider-oci/pkg/operator/options"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacityreservation"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/clusterplacementgroup"
@@ -70,7 +71,8 @@ func NewController(ctx context.Context,
 	identityProvider identity.Provider,
 	clusterPlacementGroupProvider clusterplacementgroup.Provider) (*Controller, error) {
 
-	clusterCompartmentId := options.FromContext(ctx).ClusterCompartmentId
+	ociOptions := options.FromContext(ctx)
+	clusterCompartmentId := ociOptions.ClusterCompartmentId
 	nodeCompartmentReconciler := NodeCompartmentReconciler{identityProvider: identityProvider,
 		clusterCompartmentId: clusterCompartmentId}
 
@@ -175,6 +177,8 @@ func (c *Controller) Reconcile(ctx context.Context, nodeClass *v1beta1.OCINodeCl
 		log.Info("no change to resource")
 	}
 
+	metrics.RecordNodeClassReady(nodeClass.Name, nodeClass.StatusConditions().Root().IsTrue())
+
 	if errs != nil {
 		return reconcile.Result{}, errs
 	}
@@ -217,6 +221,7 @@ func (c *Controller) finalize(ctx context.Context, nodeClass *v1beta1.OCINodeCla
 	// ensure all node claims are deleted before deleting node classes.
 	stored := nodeClass.DeepCopy()
 	if !controllerutil.ContainsFinalizer(nodeClass, corev1.TerminationFinalizer) {
+		metrics.DeleteNodeClassReady(nodeClass.Name)
 		return reconcile.Result{}, nil
 	}
 
@@ -239,6 +244,7 @@ func (c *Controller) finalize(ctx context.Context, nodeClass *v1beta1.OCINodeCla
 
 	// TODO: do any oci related clean-up
 
+	metrics.DeleteNodeClassReady(nodeClass.Name)
 	controllerutil.RemoveFinalizer(nodeClass, corev1.TerminationFinalizer)
 	if !equality.Semantic.DeepEqual(stored, nodeClass) {
 		if err := c.Client.Patch(ctx, nodeClass,

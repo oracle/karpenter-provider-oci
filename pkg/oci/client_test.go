@@ -82,4 +82,14 @@ func TestLogWorkRequestDurationMetrics(t *testing.T) {
 			assert.Equal(t, uint64(0), bucket.GetCumulativeCount(), "UpperBound", bucket.GetUpperBound())
 		}
 	}
+
+	workRequestMetric, ok := fakes.FindMetricWithLabelValues(t,
+		"work_requests_total",
+		map[string]string{
+			metrics.OperationLabel: "testOperation",
+			metrics.StatusLabel:    string(wr.Status),
+		})
+
+	assert.True(t, ok)
+	assert.Equal(t, float64(1), workRequestMetric.GetCounter().GetValue())
 }

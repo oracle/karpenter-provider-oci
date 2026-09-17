@@ -17,6 +17,7 @@ import (
 	"github.com/awslabs/operatorpkg/object"
 	"github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/cache"
+	"github.com/oracle/karpenter-provider-oci/pkg/metrics"
 	"github.com/oracle/karpenter-provider-oci/pkg/oci"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/image"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/instancemeta"
@@ -155,6 +156,10 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 	capacityType := decideCapacityType(ctx, nodeClaim, instanceType)
 	var preemptibleInstanceConfig *ocicore.PreemptibleInstanceConfigDetails
 	isPreemptible := false
+	metricCapacityType := capacityType
+	if placementProposal.CapacityReservationId != nil {
+		metricCapacityType = corev1.CapacityTypeReserved
+	}
 	if capacityType == corev1.CapacityTypeSpot {
 		preemptibleInstanceConfig = &ocicore.PreemptibleInstanceConfigDetails{
 			PreemptionAction: &ocicore.TerminatePreemptionAction{},
@@ -205,6 +210,15 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 				utils.AdToZoneLabelValue(placementProposal.Ad), capacityType, compartment)
 		}()
 	}
+
+	recordInstanceLaunch := false
+	launchResult := metrics.ResultFailure
+	defer func() {
+		if recordInstanceLaunch {
+			metrics.RecordInstanceLaunch(metricCapacityType, instanceType.Shape,
+				placementProposal.Ad, launchResult)
+		}
+	}()
 
 	metadata, err := p.instanceMetaProvider.BuildInstanceMetadata(ctx, nodeClaim, nodeClass,
 		imageResolveResult, networkResolveResult, isPreemptible)
@@ -258,9 +272,12 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 		},
 	}
 
+	recordInstanceLaunch = true
 	resp, err := p.computeClient.LaunchInstance(ctx, launchRequest)
 	if err != nil {
 		if oci.IsOutOfHostCapacity(err) {
+			metrics.RecordCapacityError(metricCapacityType, instanceType.Shape,
+				placementProposal.Ad, lo.FromPtr(placementProposal.Fd))
 			return nil, NoCapacityError{}
 		}
 		return nil, err
@@ -293,6 +310,12 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 		case <-timer.C:
 			result, resultErr := p.instanceInProvisioningOrPlacementTimeOut(ctx, instance)
 			p.cacheInstance(result)
+			if resultErr == nil {
+				launchResult = metrics.ResultSuccess
+			} else if IsNoCapacityError(resultErr) {
+				metrics.RecordCapacityError(metricCapacityType, instanceType.Shape,
+					placementProposal.Ad, lo.FromPtr(placementProposal.Fd))
+			}
 			return result, resultErr
 		case <-time.After(p.pollInterval):
 			wrResp, getWrErr := p.workRequestClient.GetWorkRequest(ctx, ociwr.GetWorkRequestRequest{
@@ -306,6 +329,7 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 			case ociwr.WorkRequestStatusSucceeded:
 				oci.LogWorkRequestDuration(ctx, "LaunchInstance", wrResp.WorkRequest)
 				p.cacheInstance(instance)
+				launchResult = metrics.ResultSuccess
 				return instance, nil
 			case ociwr.WorkRequestStatusFailed, ociwr.WorkRequestStatusCanceled, ociwr.WorkRequestStatusCanceling:
 				oci.LogWorkRequestDuration(ctx, "LaunchInstance", wrResp.WorkRequest)
@@ -318,6 +342,8 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 				if len(errResp.Items) > 0 && errResp.Items[0].Message != nil {
 					err = errors.New(*errResp.Items[0].Message)
 					if oci.IsOutOfHostCapacity(err) {
+						metrics.RecordCapacityError(metricCapacityType, instanceType.Shape,
+							placementProposal.Ad, lo.FromPtr(placementProposal.Fd))
 						return nil, NoCapacityError{}
 					}
 					return nil, err
