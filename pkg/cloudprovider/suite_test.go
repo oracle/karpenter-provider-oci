@@ -277,6 +277,15 @@ func (f *FakeImageProvider) ResolveImageForShape(ctx context.Context,
 	return nil, nil
 }
 
+func (f *FakeImageProvider) ResolveImageForShapeCached(ctx context.Context,
+	imageCfg *ocioraclecouldcomv1beta1.ImageConfig, shape string) (*image.ImageResolveResult, bool) {
+	resolved, err := f.ResolveImageForShape(ctx, imageCfg, shape)
+	if err != nil || resolved == nil {
+		return nil, false
+	}
+	return resolved, true
+}
+
 type FakeNetworkProvider struct {
 	ResolveNetworkConfigFn func(context.Context,
 		*ocioraclecouldcomv1beta1.NetworkConfig) (*network.NetworkResolveResult, error)

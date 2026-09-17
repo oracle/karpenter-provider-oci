@@ -17,9 +17,11 @@ import (
 	"math"
 	"os"
 	"strings"
+	"time"
 
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/cache"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/instancetype"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/network"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -45,6 +47,7 @@ type Options struct {
 	InstanceOperationPollIntervalInSeconds           int
 	InstanceLaunchTimeOutFailOver                    bool
 	UnavailableOfferingsTTLSeconds                   int
+	DiscoveredNodeCapacityTTLHours                   int
 	EnableUnavailableOfferingsOnServiceLimitExceeded bool
 	DisableRateLimiter                               bool
 	RateLimitQPSRead                                 float64
@@ -57,6 +60,9 @@ type Options struct {
 	setFlags                                         map[string]bool
 	parsed                                           bool
 }
+
+// maxDiscoveredNodeCapacityTTLHours is the largest value that survives conversion to a time.Duration.
+const maxDiscoveredNodeCapacityTTLHours = int(math.MaxInt64 / int64(time.Hour))
 
 type optionsKey struct{}
 
@@ -129,6 +135,12 @@ Example in a JSON format:
 		int(cache.UnavailableOfferingsTTL.Seconds()),
 		"How long, in seconds, an offering observed to be out of host capacity is treated as "+
 			"unavailable before Karpenter retries it. Set to 0 to disable the unavailable-offerings cache")
+	fs.IntVar(&o.DiscoveredNodeCapacityTTLHours, "discovered-node-capacity-ttl-hours",
+		int(capacitydiscovery.DefaultNodeCapacityTTL.Hours()),
+		"How long, in hours, memory capacity measured on a registered node is reused when modelling "+
+			"later launches of the same instance type and image. Set to 0 to disable capacity "+
+			"discovery: the node-watching controller is not started, no image is resolved while "+
+			"scheduling, and every launch is modelled from the shape's declared memory")
 	fs.BoolVar(&o.EnableUnavailableOfferingsOnServiceLimitExceeded,
 		"enable-unavailable-offerings-on-service-limit-exceeded", false,
 		"Mark offerings unavailable when OCI service limits are exceeded")
@@ -253,6 +265,13 @@ func (o *Options) Validate() error {
 	}
 	if o.UnavailableOfferingsTTLSeconds < 0 {
 		return errors.New("unavailable-offerings-ttl-seconds must be zero (to disable) or a positive integer")
+	}
+	// The upper bound matters as much as the lower one: the value is multiplied by time.Hour, and
+	// anything past this overflows int64 nanoseconds. 2^51 hours, for instance, wraps to exactly
+	// zero, which would silently disable the feature rather than reject the setting.
+	if o.DiscoveredNodeCapacityTTLHours < 0 || o.DiscoveredNodeCapacityTTLHours > maxDiscoveredNodeCapacityTTLHours {
+		return fmt.Errorf("discovered-node-capacity-ttl-hours must be zero (to disable) or a positive "+
+			"integer no greater than %d", maxDiscoveredNodeCapacityTTLHours)
 	}
 	if o.RateLimitQPSRead < 0 {
 		return errors.New("rate-limit-qps-read must be greater than or equal to 0")

@@ -81,6 +81,18 @@ func (c *GetOrLoadCache[T]) GetOrLoad(ctx context.Context, key string,
 	return c.load(ctx, key, loader)
 }
 
+// GetCached returns a value only if it is already cached, without loading on a miss. It lets a
+// caller that must not reach the API - because it is on a latency-sensitive path, or because the
+// work is optional - reuse whatever a caller that may reach the API has already fetched.
+//
+// It also never waits on a concurrent load. GetOrLoad serialises loads per key on its own mutex,
+// and this does not take it; the underlying store is only locked for the read itself, never across
+// a loader call. So a caller here is never held up by another caller's in-flight request, which
+// matters when the point of reading from cache is to stay off a slow path entirely.
+func (c *GetOrLoadCache[T]) GetCached(ctx context.Context, key string) (T, bool) {
+	return c.getFromCache(ctx, key)
+}
+
 // Evict removes the current entry. An in-flight load may repopulate it after eviction.
 func (c *GetOrLoadCache[T]) Evict(key string) {
 	c.cache.Delete(key)

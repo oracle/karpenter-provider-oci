@@ -97,6 +97,7 @@ func main() {
 			op.IdentityProvider,
 			op.ClusterPlacementGroupProvider,
 			cloudProvider,
+			op.CapacityDiscoveryProvider,
 		)...).
 		Start(ctx)
 }

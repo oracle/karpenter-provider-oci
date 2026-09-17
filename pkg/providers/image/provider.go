@@ -27,8 +27,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+// errNotCached reports that a cached-only resolution needed something the cache did not hold. It
+// is not a failure: the caller asked for an answer only if one was free, and there was not one.
+var errNotCached = errors.New("not cached")
+
 type Provider interface {
 	ResolveImages(ctx context.Context, imageCfg *v1beta1.ImageConfig) (*ImageResolveResult, error)
+
+	// ResolveImageForShapeCached is ResolveImageForShape restricted to what is already cached; see
+	// the implementation for why a miss is reported as a bool rather than an error.
+	ResolveImageForShapeCached(ctx context.Context,
+		imageCfg *v1beta1.ImageConfig, shape string) (*ImageResolveResult, bool)
 
 	ResolveImageForShape(ctx context.Context,
 		imageCfg *v1beta1.ImageConfig, shape string) (*ImageResolveResult, error)
@@ -55,7 +64,16 @@ type DefaultProvider struct {
 	k8sVersion *semver.Version
 }
 
-func (p *DefaultProvider) getImage(ctx context.Context, imageOcid string) (*ocicore.Image, error) {
+func (p *DefaultProvider) getImage(ctx context.Context, imageOcid string,
+	cachedOnly bool) (*ocicore.Image, error) {
+	if cachedOnly {
+		if img, ok := p.imageOcidCache.GetCached(ctx, imageOcid); ok {
+			return img, nil
+		}
+
+		return nil, errNotCached
+	}
+
 	return p.imageOcidCache.GetOrLoad(ctx, imageOcid, func(ctx2 context.Context, key string) (*ocicore.Image, error) {
 		resp, err := p.computeClient.GetImage(ctx2, ocicore.GetImageRequest{
 			ImageId: &key,
@@ -71,6 +89,11 @@ func (p *DefaultProvider) getImage(ctx context.Context, imageOcid string) (*ocic
 
 func (p *DefaultProvider) ResolveImages(ctx context.Context,
 	imageCfg *v1beta1.ImageConfig) (*ImageResolveResult, error) {
+	return p.resolveImages(ctx, imageCfg, false)
+}
+
+func (p *DefaultProvider) resolveImages(ctx context.Context, imageCfg *v1beta1.ImageConfig,
+	cachedOnly bool) (*ImageResolveResult, error) {
 	if imageCfg != nil {
 		if imageCfg.ImageId != nil && imageCfg.ImageFilter != nil {
 			return nil, errors.New("cannot define image ocid and image filter together")
@@ -78,14 +101,14 @@ func (p *DefaultProvider) ResolveImages(ctx context.Context,
 
 		var images []*ocicore.Image
 		if imageCfg.ImageId != nil {
-			image, err := p.getImage(ctx, *imageCfg.ImageId)
+			image, err := p.getImage(ctx, *imageCfg.ImageId, cachedOnly)
 			if err != nil {
 				return nil, err
 			}
 
 			images = append(images, image)
 		} else if imageCfg.ImageFilter != nil {
-			is, err := p.filterImage(ctx, imageCfg.ImageType, *imageCfg.ImageFilter)
+			is, err := p.filterImage(ctx, imageCfg.ImageType, *imageCfg.ImageFilter, cachedOnly)
 
 			if err != nil {
 				return nil, err
@@ -94,7 +117,7 @@ func (p *DefaultProvider) ResolveImages(ctx context.Context,
 			images = append(images, is...)
 		}
 
-		images, err := p.filterAndSortImages(ctx, images, imageCfg)
+		images, err := p.filterAndSortImages(ctx, images, imageCfg, cachedOnly)
 		if err != nil {
 			return nil, err
 		}
@@ -116,7 +139,29 @@ func (p *DefaultProvider) ResolveImages(ctx context.Context,
 
 func (p *DefaultProvider) ResolveImageForShape(ctx context.Context,
 	imageCfg *v1beta1.ImageConfig, shape string) (*ImageResolveResult, error) {
-	images, err := p.ResolveImages(ctx, imageCfg)
+	return p.resolveImageForShape(ctx, imageCfg, shape, false)
+}
+
+// ResolveImageForShapeCached answers only from what is already cached, and reports whether it
+// could. It makes no API call, so a caller on a latency-sensitive path can reuse what launches and
+// the NodeClass reconciler have already fetched without ever waiting on OCI or failing because of
+// it. A miss is not an error - it means the answer was not free, which is all the caller asked.
+//
+// It runs the same selection as ResolveImageForShape, on the same code path rather than a parallel
+// one, so the image it names is the image a launch would use.
+func (p *DefaultProvider) ResolveImageForShapeCached(ctx context.Context,
+	imageCfg *v1beta1.ImageConfig, shape string) (*ImageResolveResult, bool) {
+	resolved, err := p.resolveImageForShape(ctx, imageCfg, shape, true)
+	if err != nil {
+		return nil, false
+	}
+
+	return resolved, true
+}
+
+func (p *DefaultProvider) resolveImageForShape(ctx context.Context, imageCfg *v1beta1.ImageConfig,
+	shape string, cachedOnly bool) (*ImageResolveResult, error) {
+	images, err := p.resolveImages(ctx, imageCfg, cachedOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +172,7 @@ func (p *DefaultProvider) ResolveImageForShape(ctx context.Context,
 	var firstImage *ocicore.Image
 	for _, item := range images.Images {
 		var shapes set.Set[string]
-		shapes, err = p.listShapesForImage(ctx, *item.Id)
+		shapes, err = p.listShapesForImage(ctx, *item.Id, cachedOnly)
 		if err != nil {
 			return nil, err
 		}
@@ -149,7 +194,16 @@ func (p *DefaultProvider) ResolveImageForShape(ctx context.Context,
 	return p.toImageResolveResult([]*ocicore.Image{firstImage}, imageCfg), nil
 }
 
-func (p *DefaultProvider) listShapesForImage(ctx context.Context, imageOcid string) (set.Set[string], error) {
+func (p *DefaultProvider) listShapesForImage(ctx context.Context, imageOcid string,
+	cachedOnly bool) (set.Set[string], error) {
+	if cachedOnly {
+		if shapes, ok := p.imageShapeCache.GetCached(ctx, imageOcid); ok {
+			return shapes, nil
+		}
+
+		return nil, errNotCached
+	}
+
 	return p.imageShapeCache.GetOrLoad(ctx, imageOcid, func(ctx2 context.Context, k string) (set.Set[string], error) {
 		var shapes []string
 		request := ocicore.ListImageShapeCompatibilityEntriesRequest{
@@ -178,7 +232,7 @@ func (p *DefaultProvider) listShapesForImage(ctx context.Context, imageOcid stri
 }
 
 func (p *DefaultProvider) filterImage(ctx context.Context, imageType v1beta1.ImageType,
-	filter v1beta1.ImageSelectorTerm) ([]*ocicore.Image, error) {
+	filter v1beta1.ImageSelectorTerm, cachedOnly bool) ([]*ocicore.Image, error) {
 	k, err := utils.HashFor(filter)
 	if err != nil {
 		return nil, err
@@ -211,6 +265,14 @@ func (p *DefaultProvider) filterImage(ctx context.Context, imageType v1beta1.Ima
 		}
 
 		return true
+	}
+
+	if cachedOnly {
+		if images, ok := p.imageFilterCache.GetCached(ctx, k); ok {
+			return images, nil
+		}
+
+		return nil, errNotCached
 	}
 
 	return p.imageFilterCache.GetOrLoad(ctx, k, func(ctx2 context.Context, _ string) ([]*ocicore.Image, error) {
@@ -279,7 +341,7 @@ func (p *DefaultProvider) toImageResolveResult(images []*ocicore.Image,
 }
 
 func (p *DefaultProvider) filterAndSortImages(ctx context.Context, images []*ocicore.Image,
-	imageCfg *v1beta1.ImageConfig) ([]*ocicore.Image, error) {
+	imageCfg *v1beta1.ImageConfig, cachedOnly bool) ([]*ocicore.Image, error) {
 	if len(images) == 0 {
 		return nil, errors.New("no image available")
 	}
@@ -310,7 +372,13 @@ func (p *DefaultProvider) filterAndSortImages(ctx context.Context, images []*oci
 	imgScore := make(map[string]int)
 	out := make([]*ocicore.Image, 0)
 	for _, i := range images {
-		imgKletVersion, err := p.extractKubeletVersionFromPreBakedImage(ctx, i)
+		imgKletVersion, err := p.extractKubeletVersionFromPreBakedImage(ctx, i, cachedOnly)
+		if errors.Is(err, errNotCached) {
+			// Skipping here would silently select a different image than a launch would, because a
+			// launch has the whole chain available and this pass does not. Abandon instead, so the
+			// caller falls back rather than acting on an answer it cannot trust.
+			return nil, err
+		}
 		if err != nil {
 			// TBD: this is not necessarily an issue, or this is platform image as compute list image
 			// always return platform images
@@ -358,7 +426,7 @@ func (p *DefaultProvider) refreshClusterVersion() error {
 }
 
 func (p *DefaultProvider) extractKubeletVersionFromPreBakedImage(ctx context.Context,
-	i *ocicore.Image) (*semver.Version, error) {
+	i *ocicore.Image, cachedOnly bool) (*semver.Version, error) {
 
 	if imageK8sVersion, ok := i.FreeformTags["k8s_version"]; ok {
 		kletVersion, err := semver.NewVersion(strings.Trim(strings.ToLower(imageK8sVersion), "v"))
@@ -376,12 +444,12 @@ func (p *DefaultProvider) extractKubeletVersionFromPreBakedImage(ctx context.Con
 	// Images created based on OKEImages images don't carry the `k8s_version` tag themselves.
 	// In that case we recursively walk the base-image chain (BaseImageId -> GetImage -> BaseImageId ...)
 	// until we find an ancestor image that has the tag, or we hit an image with no base (and fail).
-	baseImage, err := p.getImage(ctx, *i.BaseImageId)
+	baseImage, err := p.getImage(ctx, *i.BaseImageId, cachedOnly)
 	if err != nil {
 		return nil, err
 	}
 
-	return p.extractKubeletVersionFromPreBakedImage(ctx, baseImage)
+	return p.extractKubeletVersionFromPreBakedImage(ctx, baseImage, cachedOnly)
 }
 
 func kubeletVersionCompatibleScore(clusterVersion, kletVersion *semver.Version) int {

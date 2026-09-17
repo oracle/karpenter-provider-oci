@@ -11,6 +11,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/awslabs/operatorpkg/controller"
+	"github.com/oracle/karpenter-provider-oci/pkg/controllers/capacitydiscovery"
 	"github.com/oracle/karpenter-provider-oci/pkg/fakes"
 	"github.com/oracle/karpenter-provider-oci/pkg/operator/options"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacityreservation"
@@ -25,7 +27,9 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/fake"
+	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
 func TestControllers(t *testing.T) {
@@ -58,11 +62,40 @@ var _ = Describe("OCINodeClass Reconciler", func() {
 		cpgProvider := clusterplacementgroup.NewProvider(ctx, fakes.NewFakeClusterPlacementGroupClient(
 			nodeClassClusterCompartmentId), nodeClassClusterCompartmentId)
 
-		controllers := NewControllers(ctx, nil, nil, nil, fake.NewClientset(),
-			&fakes.FakeEventRecorder{}, imageProvider, kmsProvider, networkProvider, crProvider, computeClusterProvider,
-			identityProvider, cpgProvider, &fakes.FakeCloudProvider{},
-		)
+		newControllers := func(discoveryEnabled bool) []controller.Controller {
+			return NewControllers(ctx, nil, nil, nil, fake.NewClientset(),
+				&fakes.FakeEventRecorder{}, imageProvider, kmsProvider, networkProvider, crProvider,
+				computeClusterProvider, identityProvider, cpgProvider, &fakes.FakeCloudProvider{},
+				&fakeCapacityProvider{enabled: discoveryEnabled},
+			)
+		}
 
-		Expect(controllers).To(HaveLen(2))
+		hasCapacityController := func(cs []controller.Controller) bool {
+			return lo.ContainsBy(cs, func(c controller.Controller) bool {
+				_, ok := c.(*capacitydiscovery.Controller)
+				return ok
+			})
+		}
+
+		Expect(newControllers(true)).To(HaveLen(3))
+		Expect(hasCapacityController(newControllers(true))).To(BeTrue())
+
+		// Disabling capacity discovery must remove its controller, not merely neuter it: left
+		// registered it would keep watching nodes and reading NodeClaims and NodeClasses to
+		// produce measurements nothing would store. Assert which controller went, so that
+		// dropping a different one would not pass.
+		Expect(newControllers(false)).To(HaveLen(2))
+		Expect(hasCapacityController(newControllers(false))).To(BeFalse())
 	})
 })
+
+// fakeCapacityProvider stands in for the instance type provider's capacity discovery, which this
+// test does not exercise; it only needs NewControllers to wire something in.
+type fakeCapacityProvider struct{ enabled bool }
+
+func (f *fakeCapacityProvider) Enabled() bool { return f.enabled }
+
+func (f *fakeCapacityProvider) RecordNodeCapacity(_ context.Context, _ *corev1.Node,
+	_ *karpv1.NodeClaim) error {
+	return nil
+}

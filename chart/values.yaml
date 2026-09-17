@@ -278,6 +278,13 @@ settings:
   # -- When true, OCI LimitExceeded and QuotaExceeded failures mark the offering unavailable. Disabled by default.
   enableUnavailableOfferingsOnServiceLimitExceeded: false
 
+  # -- How long, in hours, memory capacity measured on a registered node is reused when modelling
+  # later launches of the same instance type and image. Karpenter has to size a node before it
+  # exists, so it starts from an estimate; once a node of that kind has registered, its real
+  # capacity is used instead. Set to 0 to disable capacity discovery: the node-watching controller
+  # is not started, no image is resolved while scheduling, and every launch is modelled from the
+  # configured vmMemoryOverhead estimate below instead of from measurement.
+  discoveredNodeCapacityTTLHours: 1440
   # VM memory overhead. OCI reserves memory below the guest, so a VM shape advertised as 32 GB
   # presents roughly 30.9 GiB of MemTotal to Linux. Karpenter must estimate a node's memory
   # before the node exists, so this is subtracted from every VM shape's modelled capacity.
@@ -299,7 +306,7 @@ settings:
     baseMiB: 600
     # -- Part of the overhead that scales with declared memory, in MiB per GiB.
     perGBMiB: 19
-    # -- An alternative way of expressing the overhead, as a fraction of declared memory
+    # -- (float) An alternative way of expressing the overhead, as a fraction of declared memory
     # (0.075 == 7.5%). 0 means unused. The larger of the two forms is applied, so setting this
     # can only make the estimate more conservative, never less.
     percent: 0

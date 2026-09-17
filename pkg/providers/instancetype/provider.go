@@ -23,6 +23,7 @@ import (
 	"github.com/oracle/karpenter-provider-oci/pkg/cache"
 	"github.com/oracle/karpenter-provider-oci/pkg/metrics"
 	"github.com/oracle/karpenter-provider-oci/pkg/oci"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacityreservation"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/clusterplacementgroup"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/computecluster"
@@ -86,7 +87,11 @@ type DefaultProvider struct {
 	k8sVersion                    *semver.Version
 	ipFamilies                    []network.IpFamily
 	unavailableOfferings          *cache.UnavailableOfferings
-	vmMemoryOverhead              VMMemoryOverheadConfig
+	// capacityAdvisor optionally supplies memory measured on real nodes, in place of the figure
+	// modelled from the shape's declared memory. Narrow on purpose: modelling should not acquire
+	// image resolution or its caches as dependencies, and must not depend on advice arriving.
+	capacityAdvisor  capacitydiscovery.Advisor
+	vmMemoryOverhead VMMemoryOverheadConfig
 
 	lock sync.RWMutex
 }
@@ -106,6 +111,7 @@ func New(ctx context.Context,
 	globalShapeConfigs []ociv1beta1.ShapeConfig,
 	ipFamilies []network.IpFamily,
 	unavailableOfferings *cache.UnavailableOfferings,
+	capacityAdvisor capacitydiscovery.Advisor,
 	vmMemoryOverhead VMMemoryOverheadConfig,
 	startAsync <-chan struct{}) (*DefaultProvider, error) {
 	p := &DefaultProvider{
@@ -124,6 +130,7 @@ func New(ctx context.Context,
 		ipFamilies:                    ipFamilies,
 		kubernetesInterface:           kubernetesInterface,
 		unavailableOfferings:          unavailableOfferings,
+		capacityAdvisor:               capacityAdvisor,
 		vmMemoryOverhead:              vmMemoryOverhead,
 	}
 
@@ -273,7 +280,8 @@ func (p *DefaultProvider) listInstanceTypesForFlexShape(ctx context.Context, sha
 // Besides populating metadata like cost/preemptible/availability, it also handles flexible & burstable shape.
 // nolint:lll
 func (p *DefaultProvider) decorateInstanceType(ctx context.Context, it *OciInstanceType,
-	nodeClass *ociv1beta1.OCINodeClass, shapeAndAd *ShapeAndAd, taints []v1.Taint) error {
+	nodeClass *ociv1beta1.OCINodeClass, shapeAndAd *ShapeAndAd, taints []v1.Taint,
+	advice capacitydiscovery.Advice) error {
 	if it == nil || nodeClass == nil || shapeAndAd == nil || shapeAndAd.Shape == nil {
 		return nil
 	}
@@ -320,6 +328,19 @@ func (p *DefaultProvider) decorateInstanceType(ctx context.Context, it *OciInsta
 	totalVcpu := p.vcpu(shape, ocpu)
 	setCapacity(it, shape, totalVcpu, memoryInGbs, nodeClass, p.ipFamilies, p.vmMemoryOverhead)
 	setOverhead(it, totalVcpu, memoryInGbs, nodeClass)
+
+	// Prefer memory actually measured on a node of this kind over the modelled figure. Applied
+	// after setCapacity rather than inside it so that the estimate stays a single, self-contained
+	// calculation and the measurement is visibly an override of it.
+	//
+	// Advice is optional by construction: when none is available the estimate above stands, which
+	// is the behaviour this provider had before any of it existed. Overhead (kubeReserved,
+	// eviction thresholds) is deliberately left as modelled - it is derived from the shape's
+	// declared memory, which is slightly larger than the real figure, so the reserve is marginally
+	// generous and allocatable stays on the conservative side.
+	if measured, ok := advice.MemoryFor(it.Name); ok && it.Capacity != nil {
+		it.Capacity[v1.ResourceMemory] = measured
+	}
 
 	basePrice, priceAvailable := p.calculatePrices(shape, ocpu, memoryInGbs, cpuBaseline)
 
@@ -999,10 +1020,15 @@ func (p *DefaultProvider) makeInstanceTypes(ctx context.Context,
 		candidateTypes = []*OciInstanceType{it}
 	}
 
+	// Ask once for the shape rather than once per generated configuration. A flexible shape
+	// expands into many instance types that all share it, and obtaining advice is the only part of
+	// decoration that can reach OCI.
+	advice := p.adviceForShape(ctx, *sa.Shape.Shape, nodeClass)
+
 	ret := make([]*OciInstanceType, 0)
 	for _, it := range candidateTypes {
 		// decorate offering, capacity, overhead
-		err := p.decorateInstanceType(ctx, it, nodeClass, sa, taints)
+		err := p.decorateInstanceType(ctx, it, nodeClass, sa, taints, advice)
 		if err != nil {
 			return nil, err
 		}
@@ -1204,4 +1230,22 @@ func (p *DefaultProvider) getPlacementRestrictFunc(ctx context.Context,
 		return true
 	}
 	return placementRestrictFunc, nil
+}
+
+// adviceForShape asks the capacity advisor, if one is configured, what memory has actually been
+// measured for this shape. An absent advisor and an advisor with nothing to say are the same thing
+// to this provider: the modelled estimate stands.
+func (p *DefaultProvider) adviceForShape(ctx context.Context, shape string,
+	nodeClass *ociv1beta1.OCINodeClass) capacitydiscovery.Advice {
+	if p.capacityAdvisor == nil {
+		return capacitydiscovery.NoAdvice()
+	}
+
+	// An advisor that answers with nothing is treated as one that had nothing to say. Modelling
+	// must not be able to fail because of an optional refinement to it.
+	if advice := p.capacityAdvisor.AdviseForShape(ctx, shape, nodeClass); advice != nil {
+		return advice
+	}
+
+	return capacitydiscovery.NoAdvice()
 }
