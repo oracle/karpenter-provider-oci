@@ -38,14 +38,18 @@ import (
 	ocicore "github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	clientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/controllers/dynamicresources/deviceallocation"
@@ -686,8 +690,9 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 			Expect(created.Labels[corev1.LabelInstanceTypeStable]).To(Equal(shape))
 		})
 
-		It("should retry on no capacity and ignore NPN apply failures", func() {
+		It("should retry on no capacity and fail the launch on NPN construction failures", func() {
 			launchCount := 0
+			var deleted []string
 			cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
 				kubeClient:    kubeClient,
 				instanceTypes: []*instancetype.OciInstanceType{instanceA, instanceB},
@@ -707,6 +712,10 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 						}
 						return &instance.InstanceInfo{Instance: testInstanceWithShape(it.Shape, "pool-a")}, nil
 					},
+					DeleteInstanceFn: func(_ context.Context, id string) error {
+						deleted = append(deleted, id)
+						return nil
+					},
 				},
 				npnProvider: &FakeNpnProvider{
 					NpnClusterFn: func() bool { return true },
@@ -718,9 +727,199 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 			})
 
 			created, err := cp.Create(context.Background(), nodeClaim)
-			Expect(err).ToNot(HaveOccurred())
-			Expect(created.Labels[corev1.LabelInstanceTypeStable]).To(Equal("shape-b"))
+			Expect(created).To(BeNil())
+			var createErr *cloudprovider.CreateError
+			Expect(errors.As(err, &createErr)).To(BeTrue())
+			Expect(createErr.ConditionReason).To(Equal("NpnApplyFailed"))
 			Expect(launchCount).To(Equal(2))
+			Expect(deleted).To(ConsistOf("ocid1.instance.oc1..shape-b"))
+		})
+
+		Context("NPN apply", func() {
+			var (
+				npnCreates      int
+				deleted         []string
+				instanceFound   int
+				crMarkedUsed    int
+				npnCreateErrors []error
+				npnPersisted    bool
+			)
+
+			npnGR := schema.GroupResource{Group: npn.NPN_CUSTOM_RESOURCE_GROUP_NAME,
+				Resource: npn.NPN_CUSTOM_RESOURCE_PLURAL_NAME}
+
+			BeforeEach(func() {
+				npnCreates, instanceFound, crMarkedUsed = 0, 0, 0
+				deleted = nil
+				npnCreateErrors = nil
+				npnPersisted = false
+				orig := npnApplyBackoff
+				npnApplyBackoff = wait.Backoff{Steps: 5, Duration: time.Millisecond}
+				DeferCleanup(func() { npnApplyBackoff = orig })
+			})
+
+			// newNpnCloudProvider wires a cloud provider for an NPN cluster whose kube client fails NPN creates
+			// with npnCreateErrors in order, then succeeds.
+			newNpnCloudProvider := func() *CloudProvider {
+				npnClient := interceptor.NewClient(kubeClient.(client.WithWatch), interceptor.Funcs{
+					Create: func(ctx context.Context, c client.WithWatch, obj client.Object,
+						opts ...client.CreateOption) error {
+						if _, ok := obj.(*npnv1beta1.NativePodNetwork); !ok {
+							return c.Create(ctx, obj, opts...)
+						}
+						npnCreates++
+						if npnCreates <= len(npnCreateErrors) {
+							return npnCreateErrors[npnCreates-1]
+						}
+						return nil
+					},
+					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object,
+						opts ...client.GetOption) error {
+						if _, ok := obj.(*npnv1beta1.NativePodNetwork); !ok {
+							return c.Get(ctx, key, obj, opts...)
+						}
+						if npnPersisted {
+							return nil
+						}
+						return apierrors.NewNotFound(npnGR, key.Name)
+					},
+				})
+				return newUnitTestCloudProvider(unitTestCloudProviderOptions{
+					kubeClient:    npnClient,
+					instanceTypes: []*instancetype.OciInstanceType{instanceA},
+					instanceProvider: &FakeInstanceProvider{
+						LaunchInstanceFn: func(_ context.Context, _ *v1.NodeClaim, _ *v1beta1.OCINodeClass,
+							it *instancetype.OciInstanceType, _ *image.ImageResolveResult, _ *network.NetworkResolveResult,
+							_ *kms.KmsKeyResolveResult, _ *placement.Proposal) (*instance.InstanceInfo, error) {
+							inst := testInstanceWithShape(it.Shape, "pool-a")
+							inst.CapacityReservationId = lo.ToPtr("ocid1.capacityreservation.oc1..a")
+							return &instance.InstanceInfo{Instance: inst}, nil
+						},
+						DeleteInstanceFn: func(_ context.Context, id string) error {
+							deleted = append(deleted, id)
+							return nil
+						},
+					},
+					placementProvider: &FakePlacementProvider{
+						InstanceFoundFn: func(string, *ocicore.Instance) { instanceFound++ },
+					},
+					capacityReservationProvider: &FakeCapacityReservationProvider{
+						MarkUsedFn: func(*ocicore.Instance) { crMarkedUsed++ },
+					},
+					npnProvider: &FakeNpnProvider{
+						NpnClusterFn: func() bool { return true },
+						CreateCustomObjFn: func(_ context.Context, _ *ocicore.Instance, _ *v1beta1.OCINodeClass,
+							_ *network.NetworkResolveResult) (*npnv1beta1.NativePodNetwork, error) {
+							return &npnv1beta1.NativePodNetwork{ObjectMeta: metav1.ObjectMeta{Name: "npn"}}, nil
+						},
+					},
+				})
+			}
+
+			It("should retry transient NPN create failures and launch the node", func() {
+				npnCreateErrors = []error{
+					errors.New("read tcp 10.0.0.1:1234->10.96.0.1:443: read: connection reset by peer"),
+					apierrors.NewServiceUnavailable("etcd leader changed"),
+				}
+
+				created, err := newNpnCloudProvider().Create(context.Background(), nodeClaim)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(created).ToNot(BeNil())
+				Expect(npnCreates).To(Equal(3))
+				Expect(deleted).To(BeEmpty())
+				Expect(instanceFound).To(Equal(1))
+				Expect(crMarkedUsed).To(Equal(1))
+			})
+
+			It("should treat an NPN that already exists as created", func() {
+				npnCreateErrors = []error{
+					errors.New("connection reset by peer"),
+					apierrors.NewAlreadyExists(npnGR, "npn"),
+				}
+
+				created, err := newNpnCloudProvider().Create(context.Background(), nodeClaim)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(created).ToNot(BeNil())
+				Expect(npnCreates).To(Equal(2))
+				Expect(deleted).To(BeEmpty())
+			})
+
+			It("should terminate the instance and fail the launch once retries are exhausted", func() {
+				for range npnApplyBackoff.Steps {
+					npnCreateErrors = append(npnCreateErrors, errors.New("connection reset by peer"))
+				}
+
+				created, err := newNpnCloudProvider().Create(context.Background(), nodeClaim)
+				Expect(created).To(BeNil())
+				var createErr *cloudprovider.CreateError
+				Expect(errors.As(err, &createErr)).To(BeTrue())
+				Expect(createErr.ConditionReason).To(Equal("NpnApplyFailed"))
+				Expect(err).To(MatchError(ContainSubstring("connection reset by peer")))
+				Expect(npnCreates).To(Equal(npnApplyBackoff.Steps))
+				Expect(deleted).To(ConsistOf("ocid1.instance.oc1.." + testShapeA))
+				Expect(instanceFound).To(BeZero())
+				Expect(crMarkedUsed).To(BeZero())
+			})
+
+			It("should launch the node when the last failed NPN create was in fact persisted", func() {
+				for range npnApplyBackoff.Steps {
+					npnCreateErrors = append(npnCreateErrors, errors.New("connection reset by peer"))
+				}
+				npnPersisted = true
+
+				created, err := newNpnCloudProvider().Create(context.Background(), nodeClaim)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(created).ToNot(BeNil())
+				Expect(deleted).To(BeEmpty())
+			})
+
+			It("should not retry an NPN the API server rejects", func() {
+				npnCreateErrors = []error{
+					apierrors.NewForbidden(npnGR, "npn", errors.New("denied by admission webhook")),
+				}
+
+				created, err := newNpnCloudProvider().Create(context.Background(), nodeClaim)
+				Expect(created).To(BeNil())
+				Expect(cloudprovider.IsInsufficientCapacityError(err)).To(BeFalse())
+				var createErr *cloudprovider.CreateError
+				Expect(errors.As(err, &createErr)).To(BeTrue())
+				Expect(npnCreates).To(Equal(1))
+				Expect(deleted).To(ConsistOf("ocid1.instance.oc1.." + testShapeA))
+			})
+
+			It("should terminate the instance even when the launch context was canceled", func() {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				npnCreateErrors = []error{ctx.Err()}
+				cp := newNpnCloudProvider()
+				var terminateCtxErr error
+				cp.instanceProvider.(*FakeInstanceProvider).DeleteInstanceFn = func(ctx context.Context, id string) error {
+					terminateCtxErr = ctx.Err()
+					deleted = append(deleted, id)
+					return nil
+				}
+
+				created, err := cp.Create(ctx, nodeClaim)
+				Expect(created).To(BeNil())
+				Expect(err).To(HaveOccurred())
+				Expect(npnCreates).To(Equal(1))
+				Expect(deleted).To(ConsistOf("ocid1.instance.oc1.." + testShapeA))
+				Expect(terminateCtxErr).ToNot(HaveOccurred())
+			})
+
+			It("should still fail the launch when terminating the instance fails", func() {
+				npnCreateErrors = []error{apierrors.NewBadRequest("invalid NPN")}
+				cp := newNpnCloudProvider()
+				cp.instanceProvider.(*FakeInstanceProvider).DeleteInstanceFn = func(context.Context, string) error {
+					return errors.New("terminate failed")
+				}
+
+				created, err := cp.Create(context.Background(), nodeClaim)
+				Expect(created).To(BeNil())
+				var createErr *cloudprovider.CreateError
+				Expect(errors.As(err, &createErr)).To(BeTrue())
+				Expect(err).To(MatchError(ContainSubstring("invalid NPN")))
+			})
 		})
 
 		It("should return insufficient capacity when launch exhausts out of host capacity errors", func() {

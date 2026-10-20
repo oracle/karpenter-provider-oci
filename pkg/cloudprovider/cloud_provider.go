@@ -35,9 +35,11 @@ import (
 	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
 	apierros "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	coreapis "sigs.k8s.io/karpenter/pkg/apis"
@@ -239,24 +241,26 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *corev1.NodeClaim)
 		return nil, cloudprovider.NewCreateError(finalErr, "LaunchInstanceFailed", errMsg)
 	}
 
-	c.placementProvider.InstanceFound(nodeClaim.Labels[corev1.NodePoolLabelKey], inst.Instance)
-	if inst.Instance.CapacityReservationId != nil {
-		c.capacityReservationProvider.MarkCapacityReservationUsed(inst.Instance)
-	}
-
 	if c.npnProvider.NpnCluster() {
 		lg.Info("Creating NPN Object")
 		npnApplyError := c.createAndApplyNpnObject(ctx, inst, nodeClass, networkResolveResult)
 		if npnApplyError != nil {
-			errMsg := fmt.Sprintf("Failed to apply NPN object: %s",
-				npnApplyError.Error())
-			lg.Error(npnApplyError, errMsg)
-			// We shouldn't return errors from here because if only NPN apply failed it will keep creating new compute instances
-			// If NPN apply failed the node claims will end up not able to join the cluster and will be terminated eventually
-			// return nil, cloudprovider.NewCreateError(err, "LaunchInstanceFailed", errMsg)
+			// Without its NPN the node still registers, but OKE never attaches its pod-subnet VNIC, so the CNI
+			// never becomes ready and the node never initializes. Core karpenter reclaims neither unregistered
+			// nor uninitialized-but-registered nodes on its own, so returning the instance here would leak it.
+			// Terminate it and fail the launch instead; core karpenter retries Create with backoff.
+			lg.Error(npnApplyError, "failed to apply NPN object, terminating instance")
+			c.terminateInstanceAfterFailedLaunch(ctx, inst)
+			return nil, cloudprovider.NewCreateError(fmt.Errorf("apply NPN object, %w", npnApplyError),
+				"NpnApplyFailed", "Error applying NativePodNetwork object")
 		}
 	} else {
 		lg.Info("Skipping NPN Object creation")
+	}
+
+	c.placementProvider.InstanceFound(nodeClaim.Labels[corev1.NodePoolLabelKey], inst.Instance)
+	if inst.Instance.CapacityReservationId != nil {
+		c.capacityReservationProvider.MarkCapacityReservationUsed(inst.Instance)
 	}
 
 	nodeClaim = createNodeClaimFromInstanceAndInstanceType(inst.Instance, selectedInstanceType)
@@ -277,12 +281,71 @@ func (c *CloudProvider) createAndApplyNpnObject(ctx context.Context, instance *i
 		return constructErr
 	}
 
-	applyErr := c.kubeClient.Create(ctx, npnCustomerObject)
-	if applyErr != nil {
-		return applyErr
+	// A single API-server blip (e.g. connection reset) must not cost the node, so retry transient failures.
+	// retry.OnError is not used as it reports success when a non-retryable error wraps a context error.
+	backoff := npnApplyBackoff
+	for {
+		applyErr := c.kubeClient.Create(ctx, npnCustomerObject.DeepCopy())
+		// the NPN is named after the instance OCID, so it can only exist if an earlier attempt that
+		// reported a transport error had in fact been persisted.
+		if applyErr == nil || apierros.IsAlreadyExists(applyErr) {
+			return nil
+		}
+		if !isRetryableNpnApplyError(applyErr) {
+			return applyErr
+		}
+		if backoff.Steps <= 1 || ctx.Err() != nil {
+			// no later attempt will report AlreadyExists, so check whether the last create was persisted
+			// before reporting a failure that costs the instance.
+			if c.kubeClient.Get(ctx, client.ObjectKeyFromObject(npnCustomerObject),
+				npnCustomerObject.DeepCopy()) == nil {
+				return nil
+			}
+			return applyErr
+		}
+		select {
+		case <-ctx.Done():
+			return applyErr
+		case <-time.After(backoff.Step()):
+		}
 	}
+}
 
-	return nil
+// npnApplyBackoff bounds NPN apply retries to roughly 8 seconds in total.
+var npnApplyBackoff = wait.Backoff{
+	Steps:    5,
+	Duration: 500 * time.Millisecond,
+	Factor:   2.0,
+	Jitter:   0.1,
+}
+
+// isRetryableNpnApplyError treats every error as transient (transport errors, timeouts, throttling, 5xx)
+// except those where the API server has definitively rejected the object, which no retry would change.
+func isRetryableNpnApplyError(err error) bool {
+	switch {
+	case apierros.IsInvalid(err), apierros.IsBadRequest(err), apierros.IsForbidden(err),
+		apierros.IsUnauthorized(err), apierros.IsNotFound(err), apierros.IsMethodNotSupported(err),
+		apierros.IsRequestEntityTooLargeError(err), meta.IsNoMatchError(err):
+		return false
+	}
+	return true
+}
+
+// failedLaunchTerminateTimeout bounds how long Create waits on terminating an instance it will not report.
+var failedLaunchTerminateTimeout = 2 * time.Minute
+
+// terminateInstanceAfterFailedLaunch best-effort terminates an instance that Create launched but will not
+// report to karpenter. If it fails, the orphan instance controller reclaims the instance later since no
+// NodeClaim will carry its provider ID.
+func (c *CloudProvider) terminateInstanceAfterFailedLaunch(ctx context.Context, inst *instance.InstanceInfo) {
+	// the launch may have failed because ctx was canceled, which must not also prevent the cleanup.
+	terminateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), failedLaunchTerminateTimeout)
+	defer cancel()
+	if err := c.instanceProvider.DeleteInstance(terminateCtx, *inst.Instance.Id); err != nil &&
+		!oci.IsNotFound(err) {
+		log.FromContext(ctx).Error(err, "failed to confirm termination of instance after failed launch, "+
+			"leaving it to orphan instance cleanup", "instanceId", *inst.Instance.Id)
+	}
 }
 
 func (c *CloudProvider) createNodeClaimFromInstance(ctx context.Context,
