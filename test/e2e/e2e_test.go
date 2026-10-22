@@ -47,6 +47,7 @@ import (
 	npnv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/npn/apis/v1beta1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 	autoscalingv1beta1 "sigs.k8s.io/karpenter/pkg/apis/autoscaling/v1beta1"
 	karpenterv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
@@ -316,6 +317,7 @@ func TestKarpenterE2EFlannel(t *testing.T) {
 
 	t.Run("EndToEndFlow", func(t *testing.T) {
 		s.TestScaleUp()
+		s.TestPlatformConfig()
 		s.TestSchedulingLabels()
 		s.TestShapeConfig()
 		s.TestAgentConfig()
@@ -2471,4 +2473,197 @@ func (s *E2ETestSuite) verifyNodeClaim(nodePoolName string, expectedCapacityType
 
 	require.NoError(s.t, err, "NodeClaims for NodePool %s should become Ready, registered, "+
 		"and match expected attributes", nodePoolName)
+}
+
+func (s *E2ETestSuite) TestPlatformConfig() {
+	s.t.Run("PlatformConfig", func(t *testing.T) {
+		t.Log("Start PlatformConfig testing")
+		config := s.testConfig.PlatformConfigTest
+		nodeClass, err := s.GetOciNodeClass(s.testConfig.OCINodeClass.Name)
+		require.NoError(t, err)
+		nodePool := &karpenterv1.NodePool{}
+		poolKey := client.ObjectKey{Name: s.testConfig.NodePool.Name}
+		require.NoError(t, s.ctrlClient.Get(s.ctx, poolKey, nodePool))
+		deployment := &appsv1.Deployment{}
+		require.NoError(t, s.ctrlClient.Get(s.ctx, client.ObjectKey{
+			Name: s.testConfig.TestDeployment.Name, Namespace: s.testConfig.Namespace,
+		}, deployment))
+		originalClass, originalPool := nodeClass.DeepCopy(), nodePool.DeepCopy()
+		originalReplicas := lo.FromPtr(deployment.Spec.Replicas)
+
+		// Restore shared fixtures before subsequent tests, including after an assertion fails.
+		t.Cleanup(func() {
+			if err := s.scaleTestDeployment(0); err != nil {
+				t.Errorf("Failed to scale down after PlatformConfig: %v", err)
+			}
+			currentClass, err := s.GetOciNodeClass(s.testConfig.OCINodeClass.Name)
+			if err != nil {
+				t.Errorf("Failed to get OCINodeClass during PlatformConfig cleanup: %v", err)
+			} else {
+				patched := currentClass.DeepCopy()
+				patched.Spec.PlatformConfig = originalClass.Spec.PlatformConfig.DeepCopy()
+				patched.Spec.ShapeConfigs = originalClass.DeepCopy().Spec.ShapeConfigs
+				patched.Spec.KubeletConfig = originalClass.Spec.KubeletConfig.DeepCopy()
+				if err := s.ctrlClient.Patch(s.ctx, patched, client.MergeFrom(currentClass)); err != nil {
+					t.Errorf("Failed to restore OCINodeClass after PlatformConfig: %v", err)
+				}
+			}
+			currentPool := &karpenterv1.NodePool{}
+			if err := s.ctrlClient.Get(s.ctx, poolKey, currentPool); err != nil {
+				t.Errorf("Failed to get NodePool during PlatformConfig cleanup: %v", err)
+			} else {
+				patched := currentPool.DeepCopy()
+				patched.Spec.Template.Spec.Requirements = originalPool.DeepCopy().Spec.Template.Spec.Requirements
+				patched.Spec.Disruption = originalPool.DeepCopy().Spec.Disruption
+				if err := s.ctrlClient.Patch(s.ctx, patched, client.MergeFrom(currentPool)); err != nil {
+					t.Errorf("Failed to restore NodePool after PlatformConfig: %v", err)
+				}
+			}
+			// Restore consolidation before waiting for empty nodes to be removed.
+			if err := s.waitForNoTestNodeClaims(); err != nil {
+				t.Errorf("NodeClaims remained after PlatformConfig cleanup: %v", err)
+			}
+			if err := s.scaleTestDeployment(originalReplicas); err != nil {
+				t.Errorf("Failed to restore deployment replicas after PlatformConfig: %v", err)
+			}
+		})
+
+		require.NoError(t, s.scaleTestDeployment(0))
+		require.NoError(t, s.waitForNoTestNodeClaims())
+		require.NoError(t, s.ctrlClient.Get(s.ctx, poolKey, nodePool))
+		require.NoError(t, s.PatchNodePoolRequirements(nodePool, []string{
+			corev1.LabelInstanceTypeStable, corev1.LabelArchStable, corev1.LabelOSStable,
+			ociv1beta1.OciInstanceShape, karpenterv1.CapacityTypeLabelKey,
+		}, map[string][]string{
+			corev1.LabelArchStable:      {"amd64"},
+			corev1.LabelOSStable:        {"linux"},
+			ociv1beta1.OciInstanceShape: {config.Shape},
+			karpenterv1.CapacityTypeLabelKey: {
+				karpenterv1.CapacityTypeSpot, karpenterv1.CapacityTypeReserved, karpenterv1.CapacityTypeOnDemand,
+			},
+		}))
+		require.NoError(t, s.ctrlClient.Get(s.ctx, poolKey, nodePool))
+		patchedPool := nodePool.DeepCopy()
+		// Keep initial launch assertions stable while allowing drift replacement.
+		patchedPool.Spec.Disruption.ConsolidateAfter = karpenterv1.NillableDuration{}
+		require.NoError(t, s.ctrlClient.Patch(s.ctx, patchedPool, client.MergeFrom(nodePool)))
+		require.NoError(t, s.patchOCINodeClass(func(p *ociv1beta1.OCINodeClass) {
+			p.Spec.ShapeConfigs = createShapeConfig([]ociv1beta1.ShapeConfig{config.ShapeConfig})
+			p.Spec.KubeletConfig = config.KubeletConfig.DeepCopy()
+		}))
+
+		cases := []struct {
+			name     string
+			expected PlatformConfigTestCase
+		}{
+			{"PlatformConfigAdd", config.Initial},
+			{"PlatformConfigDrift", config.Drift},
+		}
+		for _, tc := range cases {
+			// Drift verification requires a successful initial launch.
+			if !t.Run(tc.name, func(t *testing.T) {
+				if !lo.FromPtr(tc.expected.PlatformConfig.MemoryEncryptionEnabled) {
+					// Keep the Shielded replacement on-demand after removing the encryption restriction.
+					require.NoError(t, s.ctrlClient.Get(s.ctx, poolKey, nodePool))
+					require.NoError(t, s.PatchNodePoolRequirements(nodePool,
+						[]string{karpenterv1.CapacityTypeLabelKey}, map[string][]string{
+							karpenterv1.CapacityTypeLabelKey: {karpenterv1.CapacityTypeOnDemand},
+						}))
+				}
+				require.NoError(t, s.patchOCINodeClass(func(p *ociv1beta1.OCINodeClass) {
+					p.Spec.PlatformConfig = tc.expected.PlatformConfig.DeepCopy()
+				}), "Failed to patch OCINodeClass for %s", tc.name)
+				s.ensureDeploymentReplicas(s.testConfig.TestDeployment.Name, s.testConfig.Namespace,
+					s.testConfig.TestDeployment.Replicas)
+				require.NoError(t, s.waitAndVerifyNodes(s.verifyPlatformConfig, tc.expected),
+					"Nodes should reflect the platform config change for %s", tc.name)
+				s.verifyNodeClaim(s.testConfig.NodePool.Name, karpenterv1.CapacityTypeOnDemand,
+					s.testConfig.OCINodeClass.ImageId)
+				require.NoError(t, s.checkPodsReady(s.testConfig.TestDeployment.Name,
+					int(s.testConfig.TestDeployment.Replicas)), "All pods should be running after %s", tc.name)
+			}) {
+				return
+			}
+		}
+	})
+}
+
+func (s *E2ETestSuite) verifyPlatformConfig(node *corev1.Node, expected any) bool {
+	want := expected.(PlatformConfigTestCase)
+	config := s.testConfig.PlatformConfigTest
+	if !node.DeletionTimestamp.IsZero() {
+		return false
+	}
+	instance, err := s.getInstance(node)
+	require.NoError(s.t, err, "Should be able to get instance details")
+	if lo.FromPtr(instance.Shape) != config.Shape ||
+		instance.LifecycleState != ocicore.InstanceLifecycleStateRunning || instance.ShapeConfig == nil {
+		return false
+	}
+	if lo.FromPtr(instance.ShapeConfig.Ocpus) != *config.ShapeConfig.Ocpus ||
+		lo.FromPtr(instance.ShapeConfig.MemoryInGBs) != *config.ShapeConfig.MemoryInGbs ||
+		instance.ShapeConfig.BaselineOcpuUtilization !=
+			ocicore.InstanceShapeConfigBaselineOcpuUtilizationEnum(lo.FromPtr(config.ShapeConfig.BaselineOcpuUtilization)) {
+		return false
+	}
+	platform, ok := instance.PlatformConfig.(ocicore.AmdVmPlatformConfig)
+	if !ok {
+		s.t.Logf("Node %s has platform config %T; expected AMD VM", node.Name, instance.PlatformConfig)
+		return false
+	}
+	for _, setting := range []struct {
+		name     string
+		actual   *bool
+		expected *bool
+	}{
+		{"memory encryption", platform.IsMemoryEncryptionEnabled, want.PlatformConfig.MemoryEncryptionEnabled},
+		{"Secure Boot", platform.IsSecureBootEnabled, want.PlatformConfig.SecureBootEnabled},
+		{"TPM", platform.IsTrustedPlatformModuleEnabled, want.PlatformConfig.TrustedPlatformModuleEnabled},
+		{"Measured Boot", platform.IsMeasuredBootEnabled, want.PlatformConfig.MeasuredBootEnabled},
+		{"SMT", platform.IsSymmetricMultiThreadingEnabled, want.PlatformConfig.SymmetricMultiThreadingEnabled},
+	} {
+		if setting.expected != nil && (setting.actual == nil || *setting.actual != *setting.expected) {
+			s.t.Logf("Node %s does not yet have %s=%t", node.Name, setting.name, *setting.expected)
+			return false
+		}
+	}
+	if instance.PreemptibleInstanceConfig != nil ||
+		(lo.FromPtr(want.PlatformConfig.MemoryEncryptionEnabled) && lo.FromPtr(instance.CapacityReservationId) != "") {
+		s.t.Logf("Node %s has unexpected preemptible or confidential reservation settings", node.Name)
+		return false
+	}
+
+	claims := &karpenterv1.NodeClaimList{}
+	require.NoError(s.t, s.ctrlClient.List(s.ctx, claims,
+		client.MatchingLabels{NodePoolLabel: s.testConfig.NodePool.Name}))
+	claim, found := lo.Find(claims.Items, func(c karpenterv1.NodeClaim) bool {
+		return c.Status.NodeName == node.Name && c.Status.ProviderID == node.Spec.ProviderID &&
+			c.DeletionTimestamp.IsZero()
+	})
+	if !found {
+		return false
+	}
+	for name, resources := range map[string]corev1.ResourceList{
+		"Node capacity": node.Status.Capacity, "NodeClaim capacity": claim.Status.Capacity,
+	} {
+		if !resources.Cpu().Equal(resource.MustParse(want.CPU)) || !resources.Pods().Equal(resource.MustParse(want.Pods)) {
+			s.t.Logf("%s CPU=%s pods=%s; expected CPU=%s pods=%s", name,
+				resources.Cpu(), resources.Pods(), want.CPU, want.Pods)
+			return false
+		}
+	}
+	for name, resources := range map[string]corev1.ResourceList{
+		"Node allocatable": node.Status.Allocatable, "NodeClaim allocatable": claim.Status.Allocatable,
+	} {
+		if !resources.Cpu().Equal(resource.MustParse(want.AllocatableCPU)) ||
+			!resources.Pods().Equal(resource.MustParse(want.Pods)) {
+			s.t.Logf("%s CPU=%s pods=%s; expected CPU=%s pods=%s", name,
+				resources.Cpu(), resources.Pods(), want.AllocatableCPU, want.Pods)
+			return false
+		}
+	}
+	kubelet, err := s.getKubeletConfig(node.Name)
+	require.NoError(s.t, err)
+	return kubelet.KubeletConfig.PodsPerCore == lo.FromPtr(config.KubeletConfig.PodsPerCore) &&
+		kubelet.KubeletConfig.MaxPods == lo.FromPtr(config.KubeletConfig.MaxPods)
 }

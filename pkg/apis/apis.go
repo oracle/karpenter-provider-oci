@@ -19,7 +19,7 @@ import (
 	"sigs.k8s.io/karpenter/pkg/apis"
 )
 
-//go:generate controller-gen crd:allowDangerousTypes=true paths="./..." output:crd:artifacts:config=crds
+//go:generate controller-gen object crd:allowDangerousTypes=true paths="./..." output:crd:artifacts:config=crds
 var (
 	//go:embed crds/oci.oraclecloud.com_ocinodeclasses.yaml
 	OCINodeClassCRD []byte

@@ -36,6 +36,11 @@ type OCINodeClassSpec struct {
 	// +optional
 	ShapeConfigs []*ShapeConfig `json:"shapeConfigs,omitempty"`
 
+	// PlatformConfig configures Shielded Instances, confidential computing, and BIOS settings.
+	// Changes apply through node replacement.
+	// +optional
+	PlatformConfig *PlatformConfig `json:"platformConfig,omitempty"`
+
 	// NodeCompartmentId is optional to place instance in a different compartment from the cluster
 	// +optional
 	NodeCompartmentId *string `json:"nodeCompartmentId,omitempty"`
@@ -793,4 +798,52 @@ type OCINodeClassList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	// Items is the list of OCINodeClass objects.
 	Items []OCINodeClass `json:"items"`
+}
+
+// PlatformConfig contains the platform configuration for a Compute instance.
+// The selected shape must support every supplied value. Omitted fields use Compute defaults.
+// When any setting is supplied, KPO uses known shape defaults to check compatibility
+// and capacity eligibility and estimate CPU and pod resources.
+// See https://docs.oracle.com/en-us/iaas/tools/python/latest/api/core/models/oci.core.models.LaunchInstancePlatformConfig.html
+// and https://docs.oracle.com/en-us/iaas/Content/Compute/References/bios-settings.htm.
+// +kubebuilder:validation:XValidation:rule="!has(self.memoryEncryptionEnabled) || !self.memoryEncryptionEnabled || ((!has(self.secureBootEnabled) || !self.secureBootEnabled) && (!has(self.trustedPlatformModuleEnabled) || !self.trustedPlatformModuleEnabled) && (!has(self.measuredBootEnabled) || !self.measuredBootEnabled))",message="memory encryption cannot be enabled together with Secure Boot, TPM, or Measured Boot"
+type PlatformConfig struct {
+	// SecureBootEnabled enables Secure Boot, which verifies boot software signatures.
+	// +optional
+	SecureBootEnabled *bool `json:"secureBootEnabled,omitempty"`
+	// TrustedPlatformModuleEnabled enables the Trusted Platform Module (TPM).
+	// +optional
+	TrustedPlatformModuleEnabled *bool `json:"trustedPlatformModuleEnabled,omitempty"`
+	// MeasuredBootEnabled enables Measured Boot on supported virtual machine instances.
+	// +optional
+	MeasuredBootEnabled *bool `json:"measuredBootEnabled,omitempty"`
+	// MemoryEncryptionEnabled enables memory encryption for confidential computing.
+	// Confidential instances require on-demand capacity.
+	// +optional
+	MemoryEncryptionEnabled *bool `json:"memoryEncryptionEnabled,omitempty"`
+	// SymmetricMultiThreadingEnabled enables symmetric multithreading.
+	// +optional
+	SymmetricMultiThreadingEnabled *bool `json:"symmetricMultiThreadingEnabled,omitempty"`
+	// AccessControlServiceEnabled enables Access Control Service (ACS).
+	// +optional
+	AccessControlServiceEnabled *bool `json:"accessControlServiceEnabled,omitempty"`
+	// VirtualInstructionsEnabled enables virtualization instructions.
+	// +optional
+	VirtualInstructionsEnabled *bool `json:"virtualInstructionsEnabled,omitempty"`
+	// InputOutputMemoryManagementUnitEnabled enables the input-output memory management unit (IOMMU).
+	// +optional
+	InputOutputMemoryManagementUnitEnabled *bool `json:"inputOutputMemoryManagementUnitEnabled,omitempty"`
+	// NumaNodesPerSocket sets the number of NUMA nodes per socket.
+	// +optional
+	// +kubebuilder:validation:Enum=NPS0;NPS1;NPS2;NPS4;NPS6
+	NumaNodesPerSocket *string `json:"numaNodesPerSocket,omitempty"`
+	// PercentageOfCoresEnabled sets the percentage of cores to enable.
+	// +optional
+	// +kubebuilder:validation:Enum=25;50;75;100
+	PercentageOfCoresEnabled *int `json:"percentageOfCoresEnabled,omitempty"`
+}
+
+// IsEmpty reports whether no platform field was supplied. Explicit false is nonempty.
+func (p *PlatformConfig) IsEmpty() bool {
+	return p == nil || *p == (PlatformConfig{})
 }

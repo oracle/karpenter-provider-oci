@@ -664,6 +664,71 @@ spec:
                 description: NodeCompartmentId is optional to place instance in a
                   different compartment from the cluster
                 type: string
+              platformConfig:
+                description: |-
+                  PlatformConfig configures Shielded Instances, confidential computing, and BIOS settings.
+                  Changes apply through node replacement.
+                properties:
+                  accessControlServiceEnabled:
+                    description: AccessControlServiceEnabled enables Access Control
+                      Service (ACS).
+                    type: boolean
+                  inputOutputMemoryManagementUnitEnabled:
+                    description: InputOutputMemoryManagementUnitEnabled enables the
+                      input-output memory management unit (IOMMU).
+                    type: boolean
+                  measuredBootEnabled:
+                    description: MeasuredBootEnabled enables Measured Boot on supported
+                      virtual machine instances.
+                    type: boolean
+                  memoryEncryptionEnabled:
+                    description: |-
+                      MemoryEncryptionEnabled enables memory encryption for confidential computing.
+                      Confidential instances require on-demand capacity.
+                    type: boolean
+                  numaNodesPerSocket:
+                    description: NumaNodesPerSocket sets the number of NUMA nodes
+                      per socket.
+                    enum:
+                    - NPS0
+                    - NPS1
+                    - NPS2
+                    - NPS4
+                    - NPS6
+                    type: string
+                  percentageOfCoresEnabled:
+                    description: PercentageOfCoresEnabled sets the percentage of cores
+                      to enable.
+                    enum:
+                    - 25
+                    - 50
+                    - 75
+                    - 100
+                    type: integer
+                  secureBootEnabled:
+                    description: SecureBootEnabled enables Secure Boot, which verifies
+                      boot software signatures.
+                    type: boolean
+                  symmetricMultiThreadingEnabled:
+                    description: SymmetricMultiThreadingEnabled enables symmetric
+                      multithreading.
+                    type: boolean
+                  trustedPlatformModuleEnabled:
+                    description: TrustedPlatformModuleEnabled enables the Trusted
+                      Platform Module (TPM).
+                    type: boolean
+                  virtualInstructionsEnabled:
+                    description: VirtualInstructionsEnabled enables virtualization
+                      instructions.
+                    type: boolean
+                type: object
+                x-kubernetes-validations:
+                - message: memory encryption cannot be enabled together with Secure
+                    Boot, TPM, or Measured Boot
+                  rule: '!has(self.memoryEncryptionEnabled) || !self.memoryEncryptionEnabled
+                    || ((!has(self.secureBootEnabled) || !self.secureBootEnabled)
+                    && (!has(self.trustedPlatformModuleEnabled) || !self.trustedPlatformModuleEnabled)
+                    && (!has(self.measuredBootEnabled) || !self.measuredBootEnabled))'
               postBootstrapInitScript:
                 description: PostBootstrapInitScript is an optional base64 encoded
                   script to run after OKE bootstrapping

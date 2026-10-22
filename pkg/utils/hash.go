@@ -111,6 +111,9 @@ func createStaticFieldsClone(originalSpec *v1beta1.OCINodeClassSpec) *v1beta1.OC
 	ncSpecToSerialize.PostBootstrapInitScript = originalSpec.PostBootstrapInitScript
 	ncSpecToSerialize.SshAuthorizedKeys = originalSpec.SshAuthorizedKeys
 	ncSpecToSerialize.AgentPlugins = originalSpec.AgentPlugins
+	if !originalSpec.PlatformConfig.IsEmpty() {
+		ncSpecToSerialize.PlatformConfig = originalSpec.PlatformConfig
+	}
 
 	// Below is covered by IsInstanceDrifted
 	// ncSpecToSerialize.ClusterPlacementGroupConfigs

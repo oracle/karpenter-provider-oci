@@ -8,7 +8,9 @@
 package utils
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
@@ -160,6 +162,98 @@ func TestHashNodeClassSpec_StaticFieldsCloning(t *testing.T) {
 	hashAfterAgentPluginsChange := HashNodeClassSpec(nodeClass)
 	require.NotEqual(t, baselineHash, hashAfterAgentPluginsChange,
 		fmt.Sprintf("Hash must change when AgentPlugins changes, but did not (still '%v')", baselineHash))
+}
+
+func platformConfigLegacyFixtures() []*v1beta1.OCINodeClass {
+	minimal := &v1beta1.OCINodeClass{Spec: v1beta1.OCINodeClassSpec{
+		NetworkConfig: &v1beta1.NetworkConfig{PrimaryVnicConfig: &v1beta1.SimpleVnicConfig{
+			SubnetAndNsgConfig: &v1beta1.SubnetAndNsgConfig{
+				SubnetConfig: &v1beta1.SubnetConfig{SubnetId: lo.ToPtr("test-subnet")},
+			},
+		}},
+		VolumeConfig: &v1beta1.VolumeConfig{BootVolumeConfig: &v1beta1.BootVolumeConfig{
+			ImageConfig: &v1beta1.ImageConfig{ImageType: v1beta1.OKEImage, ImageId: lo.ToPtr("test-image")},
+		}},
+	}}
+	configured := minimal.DeepCopy()
+	configured.Spec.ShapeConfigs = []*v1beta1.ShapeConfig{{Ocpus: lo.ToPtr(float32(4)),
+		MemoryInGbs: lo.ToPtr(float32(32))}}
+	configured.Spec.KubeletConfig = &v1beta1.KubeletConfiguration{
+		MaxPods: lo.ToPtr(int32(80)), PodsPerCore: lo.ToPtr(int32(10)), ClusterDNS: []string{"10.0.0.10"},
+		KubeReserved: map[string]string{"cpu": "250m", "memory": "512Mi"},
+	}
+	configured.Spec.NodeCompartmentId = lo.ToPtr("test-compartment")
+	configured.Spec.FreeformTags = map[string]string{"team": "platform"}
+	configured.Spec.DefinedTags = map[string]map[string]string{"operations": {"owner": "test"}}
+	configured.Spec.Metadata = map[string]string{"custom": "value"}
+	configured.Spec.PreBootstrapInitScript = lo.ToPtr("ZWNobyB0ZXN0")
+	configured.Spec.AgentPlugins = []string{"Bastion"}
+	configured.Spec.NetworkConfig.PrimaryVnicConfig.AssignPublicIp = lo.ToPtr(false)
+	return []*v1beta1.OCINodeClass{minimal, configured}
+}
+
+func TestHashNodeClassSpec_PlatformConfigEmptyForms(t *testing.T) {
+	for _, nc := range platformConfigLegacyFixtures() {
+		legacyHash := HashNodeClassSpec(nc)
+		for _, raw := range []string{`{}`, `{
+		  "secureBootEnabled": null,
+		  "trustedPlatformModuleEnabled": null,
+		  "measuredBootEnabled": null,
+		  "memoryEncryptionEnabled": null,
+		  "symmetricMultiThreadingEnabled": null,
+		  "accessControlServiceEnabled": null,
+		  "virtualInstructionsEnabled": null,
+		  "inputOutputMemoryManagementUnitEnabled": null,
+		  "numaNodesPerSocket": null,
+		  "percentageOfCoresEnabled": null
+		}`} {
+			require.NoError(t, json.Unmarshal([]byte(raw), &nc.Spec.PlatformConfig))
+			require.True(t, nc.Spec.PlatformConfig.IsEmpty())
+			before := nc.DeepCopy()
+			require.Equal(t, legacyHash, HashNodeClassSpec(nc), raw)
+			require.Equal(t, before, nc, "hash normalization must not change the NodeClass")
+		}
+		require.NoError(t, json.Unmarshal([]byte(`null`), &nc.Spec.PlatformConfig))
+		require.Equal(t, legacyHash, HashNodeClassSpec(nc))
+	}
+}
+
+func TestHashNodeClassSpec_PlatformConfigSuppliedFields(t *testing.T) {
+	// Omitting any one of these fields from the static clone must fail this test,
+	// including an explicit false being treated as an unset pointer.
+	requests := []string{
+		`{"secureBootEnabled":false}`, `{"trustedPlatformModuleEnabled":false}`,
+		`{"measuredBootEnabled":false}`, `{"memoryEncryptionEnabled":false}`,
+		`{"symmetricMultiThreadingEnabled":false}`, `{"accessControlServiceEnabled":false}`,
+		`{"virtualInstructionsEnabled":false}`, `{"inputOutputMemoryManagementUnitEnabled":false}`,
+		`{"numaNodesPerSocket":"NPS1"}`, `{"percentageOfCoresEnabled":25}`,
+	}
+	for _, nc := range platformConfigLegacyFixtures() {
+		legacyHash := HashNodeClassSpec(nc)
+		for _, raw := range requests {
+			t.Run(raw, func(t *testing.T) {
+				nc.Spec.PlatformConfig = nil
+				require.NoError(t, json.Unmarshal([]byte(raw), &nc.Spec.PlatformConfig))
+				require.False(t, nc.Spec.PlatformConfig.IsEmpty())
+				first := HashNodeClassSpec(nc)
+				require.NotEqual(t, legacyHash, first)
+				// Changing the supplied value must also cause static drift.
+				changed := strings.ReplaceAll(raw, "false", "true")
+				changed = strings.ReplaceAll(changed, "NPS1", "NPS2")
+				changed = strings.ReplaceAll(changed, "25", "50")
+				require.NoError(t, json.Unmarshal([]byte(changed), &nc.Spec.PlatformConfig))
+				require.NotEqual(t, first, HashNodeClassSpec(nc))
+			})
+		}
+	}
+}
+
+func TestHashNodeClassSpec_PlatformConfigLegacyCompatibility(t *testing.T) {
+	// Captured from the pre-PlatformConfig implementation; never recompute these expectations.
+	want := []string{"5406671265832938312", "18037793294206555663"}
+	for i, nc := range platformConfigLegacyFixtures() {
+		require.Equal(t, want[i], HashNodeClassSpec(nc))
+	}
 }
 
 func TestKarpenterHash_NewOptionalAttributes_shouldNotChange(t *testing.T) {

@@ -119,5 +119,41 @@
     "DriftCapacityReservationId": "VAR_CAPACITY_RESERVATION2_ID",
     "DriftCapacityReservationName": "VAR_CAPACITY_RESERVATION2_NAME"
   },
+  "PlatformConfigTest": {
+    "Shape": "VM.Standard.E4.Flex",
+    "ShapeConfig": {
+      "ocpus": 8,
+      "memoryInGbs": 64,
+      "baselineOcpuUtilization": "BASELINE_1_1"
+    },
+    "KubeletConfig": {
+      "podsPerCore": 10,
+      "maxPods": 110
+    },
+    "Initial": {
+      "PlatformConfig": {
+        "memoryEncryptionEnabled": true,
+        "secureBootEnabled": false,
+        "trustedPlatformModuleEnabled": false,
+        "measuredBootEnabled": false,
+        "symmetricMultiThreadingEnabled": false
+      },
+      "CPU": "8",
+      "AllocatableCPU": "7803m",
+      "Pods": "80"
+    },
+    "Drift": {
+      "PlatformConfig": {
+        "memoryEncryptionEnabled": false,
+        "secureBootEnabled": true,
+        "trustedPlatformModuleEnabled": true,
+        "measuredBootEnabled": true,
+        "symmetricMultiThreadingEnabled": true
+      },
+      "CPU": "16",
+      "AllocatableCPU": "15783m",
+      "Pods": "110"
+    }
+  },
   "OciVcnIpNative": false
 }
