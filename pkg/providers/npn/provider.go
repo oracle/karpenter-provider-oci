@@ -208,14 +208,15 @@ func (p *DefaultProvider) CreateNpnCustomObject(ctx context.Context,
 	}
 
 	instanceId := *instance.Id
-	name := p.ocidSuffix(instanceId)
+	name := NameForInstance(instanceId)
 	networkConfig := nodeClass.Spec.NetworkConfig
 
 	return p.createNpnCustomObject(ctx, name, instanceId, networkConfig, networkResolveResult,
 		nodeClass.Spec.KubeletConfig)
 }
 
-func (p *DefaultProvider) ocidSuffix(ocid string) string {
-	tokens := strings.Split(ocid, ".")
+// NameForInstance returns the name of the NativePodNetwork object for an instance OCID.
+func NameForInstance(instanceOcid string) string {
+	tokens := strings.Split(instanceOcid, ".")
 	return tokens[len(tokens)-1]
 }
