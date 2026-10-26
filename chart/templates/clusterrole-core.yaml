@@ -41,7 +41,7 @@ rules:
     resources: ["capacitybuffers", "capacitybuffers/status"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
-    resources: ["pods", "nodes", "persistentvolumes", "persistentvolumeclaims", "replicationcontrollers", "namespaces", "podtemplates"]
+    resources: ["pods", "nodes", "persistentvolumes", "persistentvolumeclaims", "replicationcontrollers", "namespaces", "podtemplates", "services"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["storage.k8s.io"]
     resources: ["storageclasses", "csinodes", "volumeattachments"]
@@ -76,7 +76,7 @@ rules:
     verbs: ["create"]
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["delete"]
+    verbs: ["delete", "patch"]
   {{- with .Values.additionalClusterRoleRules -}}
   {{ toYaml . | nindent 2 }}
   {{- end -}}

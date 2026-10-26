@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -37,13 +38,17 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/common"
 	ocicore "github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/samber/lo"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/clock"
+	clocktesting "k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	clientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -51,6 +56,8 @@ import (
 	"sigs.k8s.io/karpenter/pkg/apis/v1alpha1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/controllers/dynamicresources/deviceallocation"
+	"sigs.k8s.io/karpenter/pkg/controllers/node/health"
+	"sigs.k8s.io/karpenter/pkg/controllers/node/legacyrepair"
 	"sigs.k8s.io/karpenter/pkg/controllers/nodeoverlay"
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
@@ -78,6 +85,238 @@ var (
 	testCreatedAt          = time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 	uniqueNameCounter      uint64
 )
+
+// newRepairTestCloudProvider exercises constructor normalization without starting cache warmup.
+func newRepairTestCloudProvider(
+	t *testing.T,
+	repairCtx context.Context,
+	kubeClient client.Client,
+	policies []cloudprovider.RepairPolicy,
+) *CloudProvider {
+	t.Helper()
+	repairCtx, stop := context.WithCancel(repairCtx)
+	t.Cleanup(stop)
+	provider, err := New(
+		repairCtx, kubeClient, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		policies,
+		false,
+		make(chan struct{}))
+	require.NoError(t, err)
+	return provider
+}
+
+func TestRepairPolicyLegacyCompatibility(t *testing.T) {
+	policies := []cloudprovider.RepairPolicy{
+		{ConditionType: corev1.NodeReady, ConditionStatus: corev1.ConditionFalse, TolerationDuration: 10 * time.Minute},
+		{
+			ConditionType:          corev1.NodeReady,
+			ConditionStatus:        corev1.ConditionUnknown,
+			TolerationDuration:     20 * time.Minute,
+			ReasonRegex:            "^Unknown$",
+			Priority:               9,
+			TerminationGracePeriod: lo.ToPtr(time.Duration(0)),
+		},
+		{
+			ConditionType:          corev1.NodeMemoryPressure,
+			ConditionStatus:        corev1.ConditionTrue,
+			TolerationDuration:     30 * time.Minute,
+			ReasonRegex:            "^OutOfMemory$",
+			Priority:               7,
+			TerminationGracePeriod: lo.ToPtr(5 * time.Minute),
+			Action:                 cloudprovider.ReplaceNode,
+		},
+		{
+			ConditionType:      corev1.NodeDiskPressure,
+			ConditionStatus:    corev1.ConditionTrue,
+			TolerationDuration: time.Minute,
+			ReasonRegex:        "^DiskFull$",
+			Priority:           3,
+			Action:             cloudprovider.RebootNode,
+		},
+	}
+	// Preserve a deep snapshot, including pointer values, to catch caller mutation.
+	original := make([]cloudprovider.RepairPolicy, len(policies))
+	copy(original, policies)
+	for i := range original {
+		if original[i].TerminationGracePeriod != nil {
+			original[i].TerminationGracePeriod = lo.ToPtr(*original[i].TerminationGracePeriod)
+		}
+	}
+	expected := append([]cloudprovider.RepairPolicy(nil), original...)
+	expected[0].Action = cloudprovider.ReplaceNode
+	expected[1].Action = cloudprovider.ReplaceNode
+	repairCtx := coreoptions.ToContext(context.Background(), &coreoptions.Options{LegacyNodeRepair: true})
+	for range 2 {
+		provider := newRepairTestCloudProvider(t, repairCtx, nil, policies)
+		require.Equal(t, expected, provider.RepairPolicies())
+		require.Equal(t, original, policies, "constructor must not mutate caller policies")
+	}
+}
+
+func TestRepairPolicyNewPathValidation(t *testing.T) {
+	repairCtx := coreoptions.ToContext(context.Background(),
+		&coreoptions.Options{
+			FeatureGates: coreoptions.FeatureGates{
+				NodeRepair: true,
+			},
+		})
+	policies := []cloudprovider.RepairPolicy{
+		{
+			ConditionType:      corev1.NodeReady,
+			ConditionStatus:    corev1.ConditionFalse,
+			TolerationDuration: 10 * time.Minute,
+		},
+	}
+	provider := newRepairTestCloudProvider(t, repairCtx, nil, policies)
+	require.Empty(t, provider.RepairPolicies()[0].Action)
+	_, err := health.NewRepairPolicyMatcher(repairCtx, provider)
+	require.ErrorContains(t, err, "unsupported action")
+	policies[0].Action = cloudprovider.ReplaceNode
+	provider = newRepairTestCloudProvider(t, repairCtx, nil, policies)
+	matcher, err := health.NewRepairPolicyMatcher(repairCtx, provider)
+	require.NoError(t, err)
+	require.NotNil(t, matcher)
+}
+
+func TestLegacyRepairProcessesOmittedActions(t *testing.T) {
+	policies := []cloudprovider.RepairPolicy{
+		{ConditionType: corev1.NodeReady, ConditionStatus: corev1.ConditionFalse, TolerationDuration: 10 * time.Minute},
+		{
+			ConditionType:      corev1.NodeMemoryPressure,
+			ConditionStatus:    corev1.ConditionTrue,
+			TolerationDuration: 20 * time.Minute,
+		},
+	}
+	for _, policy := range policies {
+		t.Run(string(policy.ConditionType), func(t *testing.T) {
+			repairCtx := coreoptions.ToContext(context.Background(), &coreoptions.Options{LegacyNodeRepair: true})
+			testScheme := scheme.Scheme
+			fakeClock := clocktesting.NewFakeClock(testCreatedAt)
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "unhealthy"},
+				Spec:       corev1.NodeSpec{ProviderID: "oci://repair-test"},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{
+							Type:               policy.ConditionType,
+							Status:             policy.ConditionStatus,
+							LastTransitionTime: metav1.NewTime(fakeClock.Now()),
+						},
+					},
+				},
+			}
+			claim := &v1.NodeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "unhealthy",
+					Finalizers: []string{v1.TerminationFinalizer},
+				},
+				Status: v1.NodeClaimStatus{
+					ProviderID: node.Spec.ProviderID,
+				},
+			}
+			kubeClient := clientfake.NewClientBuilder().WithScheme(testScheme).WithObjects(node, claim).
+				WithIndex(&v1.NodeClaim{},
+					"status.providerID",
+					func(obj client.Object) []string {
+						return []string{obj.(*v1.NodeClaim).Status.ProviderID}
+					}).
+				WithIndex(&corev1.Pod{},
+					"spec.nodeName",
+					func(obj client.Object) []string {
+						return []string{obj.(*corev1.Pod).Spec.NodeName}
+					}).Build()
+			provider := newRepairTestCloudProvider(t, repairCtx, kubeClient, policies)
+			controller := legacyrepair.NewController(kubeClient, provider, fakeClock, coretest.NewEventRecorder())
+			result, err := controller.Reconcile(repairCtx, node)
+			require.NoError(t, err)
+			require.Equal(t,
+				policy.TolerationDuration,
+				result.RequeueAfter,
+				"legacy controller must select each normalized policy with its original toleration")
+			fakeClock.Step(policy.TolerationDuration)
+			_, err = controller.Reconcile(repairCtx, node)
+			require.NoError(t, err)
+			repairedClaim := &v1.NodeClaim{}
+			require.NoError(t, kubeClient.Get(repairCtx, client.ObjectKeyFromObject(claim), repairedClaim))
+			require.False(t, repairedClaim.DeletionTimestamp.IsZero(), "expired unhealthy claim must enter termination")
+			// Reconciliation remains safe while termination is in progress.
+			_, err = controller.Reconcile(repairCtx, node)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestRebootNotImplemented(t *testing.T) {
+	for name, provider := range map[string]cloudprovider.CloudProvider{
+		"OCI":  &CloudProvider{},
+		"fake": &fakes.FakeCloudProvider{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for range 2 {
+				err := provider.Reboot(context.Background(), &v1.NodeClaim{}, "same-operation")
+				var unsupported *cloudprovider.NodeRebootNotImplementedError
+				if !errors.As(err, &unsupported) {
+					t.Fatalf("expected typed unsupported reboot error, got %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestFakeRebootCallback(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	nodeClaim := &v1.NodeClaim{}
+	wantErr := errors.New("reboot failed")
+	provider := &fakes.FakeCloudProvider{
+		RebootStub: func(gotCtx context.Context, gotClaim *v1.NodeClaim, operationID string) error {
+			if gotCtx != ctx || gotClaim != nodeClaim || operationID != "operation-1" {
+				t.Fatal("reboot callback received different arguments")
+			}
+			return wantErr
+		},
+	}
+	if err := provider.Reboot(ctx, nodeClaim, "operation-1"); !errors.Is(err, wantErr) {
+		t.Fatalf("expected callback error, got %v", err)
+	}
+}
+
+var _ = Describe("Bundled NodePool schema", func() {
+	DescribeTable("defaults an omitted consolidateAfter and preserves explicit values",
+		func(disruption map[string]interface{}, want string) {
+			object, err := runtime.DefaultUnstructuredConverter.ToUnstructured(testNodePool(uniqueName("schema"), "test"))
+			Expect(err).NotTo(HaveOccurred())
+			pool := &unstructured.Unstructured{Object: object}
+			pool.SetAPIVersion("karpenter.sh/v1")
+			pool.SetKind("NodePool")
+			unstructured.RemoveNestedField(pool.Object, "spec", "disruption")
+			if disruption != nil {
+				Expect(unstructured.SetNestedMap(pool.Object, disruption, "spec", "disruption")).To(Succeed())
+			}
+			Expect(k8sClient.Create(ctx, pool)).To(Succeed())
+			DeferCleanup(func() { Expect(k8sClient.Delete(ctx, pool)).To(Succeed()) })
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(pool), pool)).To(Succeed())
+			value, found, err := unstructured.NestedString(pool.Object, "spec", "disruption", "consolidateAfter")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(value).To(Equal(want))
+		},
+		Entry("when disruption is omitted", nil, "0s"),
+		Entry("when disruption is present", map[string]interface{}{"consolidationPolicy": "WhenEmpty"}, "0s"),
+		Entry("with an explicit delay", map[string]interface{}{"consolidateAfter": "5m"}, "5m"),
+		Entry("with consolidation disabled", map[string]interface{}{"consolidateAfter": "Never"}, "Never"),
+	)
+
+	It("accepts and retains the Unhealthy disruption budget reason", func() {
+		pool := testNodePool(uniqueName("schema-budget"), "test")
+		pool.Spec.Disruption.ConsolidateAfter = v1.NillableDuration{Duration: lo.ToPtr(time.Minute)}
+		pool.Spec.Disruption.Budgets = []v1.Budget{{Nodes: "1", Reasons: []v1.DisruptionReason{v1.DisruptionReasonUnhealthy}}}
+		Expect(k8sClient.Create(ctx, pool)).To(Succeed())
+		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, pool)).To(Succeed()) })
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(pool), pool)).To(Succeed())
+		Expect(pool.Spec.Disruption.Budgets).To(Equal([]v1.Budget{{Nodes: "1", Reasons: []v1.DisruptionReason{"Unhealthy"}}}))
+	})
+})
 
 var _ = Describe("CloudProvider Integration Tests", func() {
 	testShape := "VM.Standard.E4.Flex"

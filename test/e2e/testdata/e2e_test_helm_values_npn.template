@@ -14,6 +14,7 @@ settings:
   # -- Cluster's VCN compartment OCID
   vcnCompartmentId: "VAR_COMPARTMENT_ID"
   featureGates:
+    podDeletionCostManagement: true
     capacityBuffer: true
     nodeOverlay: true
     staticCapacity: true
@@ -31,4 +32,4 @@ settings:
 #  repairPolicies:
 #    - conditionType: Ready
 #      conditionStatus: "False"
-#      tolerationDuration: 30s
+#      tolerationDuration: 600000000000

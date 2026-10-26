@@ -38,6 +38,57 @@ func TestOperatorOptions(t *testing.T) {
 	RunSpecs(t, "Operator Suite")
 }
 
+func TestRepairPolicyOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		policies   string
+		wantAction cloudprovider.RepairAction
+		wantErr    string
+	}{
+		{
+			name: "replacement policy preserves numeric durations",
+			policies: `[{"conditionType":"Ready","conditionStatus":"False","tolerationDuration":600000000000,` +
+				`"terminationGracePeriod":300000000000,"action":"ReplaceNode"}]`,
+			wantAction: cloudprovider.ReplaceNode,
+		},
+		{
+			name: "legacy policy without action remains parseable",
+			policies: `[{"conditionType":"Ready","conditionStatus":"False","tolerationDuration":600000000000,` +
+				`"terminationGracePeriod":300000000000}]`,
+		},
+		{
+			name: "rejects unsupported reboot after a replacement policy",
+			policies: `[{"conditionType":"Ready","conditionStatus":"False","tolerationDuration":600000000000,` +
+				`"action":"ReplaceNode"},{"conditionType":"Ready","conditionStatus":"Unknown",` +
+				`"tolerationDuration":600000000000,"action":"RebootNode"}]`,
+			wantErr: "RebootNode is not supported",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := &Options{IpFamiliesFlag: new(network.IpFamilyValue)}
+			fs := &options.FlagSet{FlagSet: flag.NewFlagSet("repair", flag.ContinueOnError)}
+			opts.AddFlags(fs)
+			err := opts.Parse(fs,
+				"--cluster-compartment-id=test-cluster",
+				"--vcn-compartment-id=test-vcn",
+				"--pre-baked-image-compartment-id=test-images",
+				"--apiserver-endpoint=10.0.0.1:6443",
+				"--repair-policies="+tc.policies,
+			)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, opts.RepairPolicies, 1)
+			require.Equal(t, tc.wantAction, opts.RepairPolicies[0].Action)
+			require.Equal(t, 10*time.Minute, opts.RepairPolicies[0].TolerationDuration)
+			require.NotNil(t, opts.RepairPolicies[0].TerminationGracePeriod)
+			require.Equal(t, 5*time.Minute, *opts.RepairPolicies[0].TerminationGracePeriod)
+		})
+	}
+}
+
 var _ = Describe("Test Operator Options", func() {
 	It("should validate missing required fields properly", func() {
 		testCases := []struct {

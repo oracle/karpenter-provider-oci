@@ -4,7 +4,13 @@
 SPDX:UPL-1.0
 
 ---------------------------------- Copyright -----------------------------------
+Copyright (C) 2019, 2026 Oracle and/or its affiliates.                          [8;1HVersion 2.20.1275. Copyright (C) 2026 American Megatrends, Inc.                 [9;1HBIOS Date: 03/05/2026 19:19:37 Ver: 65019700                                    [10;1H                                                                                [11;1H                                                                                [12;1H
+Copyright (C) 2021, 2026 Oracle and/or its affiliates.                          [8;1HVersion 2.21.1280. Copyright (C) 2026 AMI                                       [9;1HBIOS Date: 04/05/2026 18:42:09 Ver: 78017400                                    [10;1H                                                                                [11;1H                                                                                [12;1H
+Copyright (C) 2022, 2026 Oracle and/or its affiliates.
+Copyright (C) 2022, 2026 Oracle and/or its affiliates.                          [2;1HVersion 2.22.1285. Copyright (C) 2026 AMI                                       [3;1HBIOS Date: 08/13/2026 07:40:17 Ver: 83101300                                    [4;1H                                                                                [5;1H                                                                                [6;1
+Copyright (C) 2026 AMI                                       [3;1HBIOS Date: 08/13/2026 07:40:17 Ver: 83101300                                    [4;1H                                                                                [5;1HPress F8 for BBS Popup (CTRL+P on serial keyboard)                              [6;1HPress F12 for network boot (CTRL+N on serial keyboard)                          [7;1H
 Copyright (c) 2026 Oracle and/or its affiliates.
+Copyright 2016 The Kubernetes Authors All Rights Reserved
 
 -------------------------- Fourth Party Dependencies ---------------------------
 
@@ -321,7 +327,7 @@ It ships with copies of other software which license terms are recalled below.
 
 The original software was authored on 25-02-2013 by sigu-399 (https://github.com/sigu-399, sigu.399@gmail.com).
 
-github.com/sigh-399/jsonpointer
+github.com/sigu-399/jsonpointer
 ===========================
 
 // SPDX-FileCopyrightText: Copyright 2013 sigu-399 ( https://github.com/sigu-399 )
@@ -361,7 +367,7 @@ Copyright 2015-2025 go-swagger maintainers
 // SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
 // SPDX-License-Identifier: Apache-2.0
 
-This software library, github.com/go-openapi/jsonpointer, includes software developed
+This software library, github.com/go-openapi/jsonreference, includes software developed
 by the go-swagger and go-openapi maintainers ("go-swagger maintainers").
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -376,7 +382,7 @@ It ships with copies of other software which license terms are recalled below.
 
 The original software was authored on 25-02-2013 by sigu-399 (https://github.com/sigu-399, sigu.399@gmail.com).
 
-github.com/sigh-399/jsonpointer
+github.com/sigh-399/jsonreference
 ===========================
 
 // SPDX-FileCopyrightText: Copyright 2013 sigu-399 ( https://github.com/sigu-399 )
@@ -574,18 +580,6 @@ Copyright (c) 2018-2024, The Gofrs
 Copyright 2015 Tim Heckman. All rights reserved.
 Copyright 2018 The Go Authors. All rights reserved.
 Copyright 2018-2024 The Gofrs. All rights reserved.
-
---------------------------------- (separator) ----------------------------------
-
-== Dependency
-github.com/google/btree
-
-== License Type
-SPDX:Apache-2.0
-
-== Copyright
-Copyright 2014 Google Inc.
-Copyright 2014-2022 Google Inc.
 
 --------------------------------- (separator) ----------------------------------
 
@@ -841,6 +835,7 @@ Copyright 2022 Google LLC
 Copyright 2023 Google LLC
 Copyright 2024 Google LLC
 Copyright 2025 Google LLC
+Copyright 2026 Google LLC
 
 --------------------------------- (separator) ----------------------------------
 
@@ -1259,7 +1254,6 @@ SPDX:Apache-2.0
 
 == Copyright
 Copyright 2014-2015 The Prometheus Authors
-Copyright 2018 The Prometheus Authors
 
 == Notices
 procfs provides functions to retrieve system, kernel and process
@@ -1331,18 +1325,6 @@ Copyright (c) 2012 The Go Authors. All rights reserved.
 Copyright 2009 The Go Authors. All rights reserved.
 Copyright 2010 The Go Authors.  All rights reserved.
 Copyright 2012 The Go Authors. All rights reserved.
-
---------------------------------- (separator) ----------------------------------
-
-== Dependency
-github.com/stoewer/go-strcase
-
-== License Type
-SPDX:MIT
-
-== Copyright
-Copyright (c) 2017, A. Stoewer <adrian.stoewer@rz.ifi.lmu.de>
-Copyright (c) 2017, Adrian Stoewer <adrian.stoewer@rz.ifi.lmu.de>
 
 --------------------------------- (separator) ----------------------------------
 
@@ -2063,9 +2045,7 @@ Copyright 2016 The Go Authors. All rights reserved.
 Copyright 2017 The Go Authors. All rights reserved.
 Copyright 2018 The Go Authors. All rights reserved.
 Copyright 2019 The Go Authors. All rights reserved.
-Copyright 2020 The Go Authors. All rights reserved.
 Copyright 2021 The Go Authors. All rights reserved.
-Copyright 2022 The Go Authors. All rights reserved.
 Copyright 2023 The Go Authors. All rights reserved.
 Copyright 2024 The Go Authors. All rights reserved.
 Copyright 2025 The Go Authors. All rights reserved.
@@ -2141,7 +2121,6 @@ Copyright 2012 The Go Authors.  All rights reserved.
 Copyright 2012 The Go Authors. All rights reserved.
 Copyright 2013 The Go Authors. All rights reserved.
 Copyright 2014 The Go Authors.  All rights reserved.
-Copyright 2014 The Go Authors. All rights reserved.
 Copyright 2015 The Go Authors. All rights reserved.
 Copyright 2016 The Go Authors. All rights reserved.
 Copyright 2017 The Go Authors. All rights reserved.
@@ -2152,6 +2131,7 @@ Copyright 2021 The Go Authors. All rights reserved.
 Copyright 2022 The Go Authors. All rights reserved.
 Copyright 2023 The Go Authors. All rights reserved.
 Copyright 2024 The Go Authors. All rights reserved.
+Copyright 2025 The Go Authors. All rights reserved.
 
 == Patents
 Additional IP Rights Grant (Patents)
@@ -2701,7 +2681,7 @@ google.golang.org/genproto/googleapis/api
 SPDX:Apache-2.0
 
 == Copyright
-Copyright 2024 Google LLC
+Copyright 2025 Google LLC
 
 --------------------------------- (separator) ----------------------------------
 
@@ -2986,6 +2966,25 @@ Copyright 2025 The Kubernetes Authors.
 --------------------------------- (separator) ----------------------------------
 
 == Dependency
+k8s.io/autoscaler/vertical-pod-autoscaler
+
+== License Type
+SPDX:Apache-2.0
+
+== Copyright
+Copyright 2015 The Kubernetes Authors.
+Copyright 2017 The Kubernetes Authors.
+Copyright 2018 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
+Copyright 2020 The Kubernetes Authors.
+Copyright 2022 The Kubernetes Authors.
+Copyright 2023 The Kubernetes Authors.
+Copyright 2024 The Kubernetes Authors.
+Copyright 2025 The Kubernetes Authors.
+
+--------------------------------- (separator) ----------------------------------
+
+== Dependency
 k8s.io/client-go
 
 == License Type
@@ -3005,6 +3004,7 @@ Copyright 2022 The Kubernetes Authors.
 Copyright 2023 The Kubernetes Authors.
 Copyright 2024 The Kubernetes Authors.
 Copyright 2025 The Kubernetes Authors.
+Copyright © 2012 Greg Jones (greg.jones@gmail.com)
 
 --------------------------------- (separator) ----------------------------------
 
@@ -3112,6 +3112,8 @@ Copyright 2020 The Kubernetes Authors.
 Copyright 2021 The Kubernetes Authors.
 Copyright 2022 The Kubernetes Authors.
 Copyright 2023 The Kubernetes Authors.
+Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The Kubernetes Authors.
 
 --------------------------------- (separator) ----------------------------------
 
@@ -3156,6 +3158,7 @@ Copyright 2009 The Go Authors. All rights reserved.
 Copyright 2010 The Go Authors. All rights reserved.
 Copyright 2013 Google Inc.
 Copyright 2014 The Kubernetes Authors.
+Copyright 2014-2022 Google Inc.
 Copyright 2015 The Kubernetes Authors.
 Copyright 2016 The Kubernetes Authors.
 Copyright 2017 The Kubernetes Authors.
@@ -3188,6 +3191,7 @@ Copyright 2022 The Kubernetes Authors.
 Copyright 2023 The Kubernetes Authors.
 Copyright 2024 The Kubernetes Authors.
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The Kubernetes Authors.
 
 --------------------------------- (separator) ----------------------------------
 
@@ -3537,6 +3541,7 @@ Copyright 2019 The Kubernetes Authors.
 Copyright 2020 The Kubernetes Authors.
 Copyright 2023 The Kubernetes Authors.
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The Kubernetes Authors.
 
 --------------------------------- (separator) ----------------------------------
 
@@ -4123,5 +4128,5 @@ The above copyright notice and either this complete permission notice or at a mi
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 === ATTRIBUTION-HELPER-GENERATED:
-=== Attribution helper version: {Major:0 Minor:11 GitVersion:2a434e4d GitCommit:2a434e4d7eea22d4dfd2d1cf04909239d05562b1 GitTreeState:clean BuildDate:2024-12-16T20:09:06Z GoVersion:go1.25.1 Compiler:gc Platform:darwin/arm64}
-=== License file based on go.mod with md5 sum:  12eb777a8fb9320773464b77efea965b
+=== Attribution helper version: {Major:0 Minor:11 GitVersion:2a434e4d GitCommit:2a434e4d7eea22d4dfd2d1cf04909239d05562b1 GitTreeState:clean BuildDate:2024-12-16T20:09:06Z GoVersion:go1.26.6 Compiler:gc Platform:darwin/arm64}
+=== License file based on go.mod with md5 sum:  63d4f754fb179a5bcc26ab1e2544c42d

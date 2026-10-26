@@ -18,11 +18,14 @@ Karpenter helps improve utilization and control cost in Kubernetes by:
 Use a `karpenter-provider-oci` version that is compatible with your Kubernetes cluster version.
 For upstream Karpenter compatibility details, see the [Karpenter compatibility documentation](https://karpenter.sh/docs/upgrading/compatibility/).
 
-| Kubernetes Version       | `karpenter-provider-oci` Version |
-|--------------------------|----------------------------------|
-| `>= v1.31` and `<= v1.34` | `v1.0.0` or higher               |
-| `>= v1.35` and `< v1.36` | `v1.1.0` or higher               |
-| `>= v1.36`  | `v1.3.0` or higher               |
+| `karpenter-provider-oci` Version   | Kubernetes Version         | Upstream Karpenter Version  |
+| ---------------------------------- | -------------------------- | --------------------------- |
+| `v1.0.0`                           | `>= v1.31` and `<= v1.34`  | `v1.6.2`                    |
+| `v1.1.0`                           | `>= v1.31` and `<= v1.35`  | `v1.11.1`                   |
+| `v1.2.0`                           | `>= v1.31` and `<= v1.35`  | `v1.12.1`                   |
+| `v1.3.0`                           | `>= v1.31` and `<= v1.36`  | `v1.13.0`                   |
+| `v1.4.0`                           | `>= v1.31` and `<= v1.36`  | `v1.14.1`                   |
+| `v1.5.0`                           | `>= v1.31` and `<= v1.37`  | `v1.15.1`                   |
 
 ## Installation
 
@@ -48,6 +51,7 @@ See [Installation](docs/guide/installation.md).
   - [Pre-provision spare capacity with `CapacityBuffer`](docs/guide/usage.md#pre-provision-spare-capacity-with-capacitybuffer)
   - [Launch worker nodes for an OciIpNativeCNI cluster](docs/guide/usage.md#launch-worker-nodes-for-an-ociipnativecni-cluster)
 - [Advanced Use Cases](docs/guide/advanced-use-cases.md)
+  - [Influence ReplicaSet scale-down with pod deletion cost](docs/guide/advanced-use-cases.md#influence-replicaset-scale-down-with-pod-deletion-cost)
   - [Oracle Cloud Agent Plugins](docs/guide/agent-plugins.md)
   - [Platform Configuration](docs/guide/platform-config.md)
     - [Shielded Instances](docs/guide/platform-config.md#shielded-instance)
@@ -69,6 +73,7 @@ See [Installation](docs/guide/installation.md).
   - [How to configure Secondary VNICs?](docs/guide/faqs.md#how-to-configure-secondary-vnics)
   - [How can I ensure deployments are scheduled on a specific karpenter node pool?](docs/guide/faqs.md#how-can-i-ensure-deployments-are-scheduled-on-a-specific-karpenter-node-pool)
   - [How can I ensure workloads are evenly scheduled across ADs and FDs with Karpenter Provider OCI?](docs/guide/faqs.md#how-can-i-ensure-workloads-are-evenly-scheduled-across-ads-and-fds-with-karpenter-provider-oci)
+    - [Mirror cluster scheduler defaults](docs/guide/faqs.md#mirror-cluster-scheduler-defaults)
   - [How can I list OKE images compatible with my OKE cluster?](docs/guide/faqs.md#how-can-i-list-oke-images-compatible-with-my-oke-cluster)
   - [Flexible shape node pool isn’t provisioning. Error: “skipping, nodepool requirements filtered out all instance types.” How do I fix this?](docs/guide/faqs.md#flexible-shape-node-pool-isnt-provisioning-error-skipping-nodepool-requirements-filtered-out-all-instance-types-how-do-i-fix-this)
   - [How to run the OCI Karpenter controller with debug logging?](docs/guide/faqs.md#how-to-run-the-oci-karpenter-controller-with-debug-logging)

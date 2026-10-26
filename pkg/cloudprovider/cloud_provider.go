@@ -89,6 +89,13 @@ func New(ctx context.Context, client client.Client, itp instancetype.Provider, i
 
 	if len(repairPolicies) > 0 {
 		c.repairPolicies = append(c.repairPolicies, repairPolicies...)
+		if coreoptions.FromContext(ctx).LegacyNodeRepair {
+			for i := range c.repairPolicies {
+				if c.repairPolicies[i].Action == "" {
+					c.repairPolicies[i].Action = cloudprovider.ReplaceNode
+				}
+			}
+		}
 	}
 
 	go func() {
@@ -828,6 +835,10 @@ func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *corev1.NodeCla
 	}
 
 	return "", nil // No drift detected after real checks
+}
+
+func (c *CloudProvider) Reboot(_ context.Context, _ *corev1.NodeClaim, _ string) error {
+	return cloudprovider.NewNodeRebootNotImplementedError()
 }
 
 func (c *CloudProvider) RepairPolicies() []cloudprovider.RepairPolicy {

@@ -40,6 +40,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/karpenter/pkg/operator"
+	coreoptions "sigs.k8s.io/karpenter/pkg/operator/options"
 )
 
 // Version is the karpenter app version injected during compilation
@@ -74,7 +75,7 @@ type Operator struct {
 
 func NewOperator(ctx context.Context, coreOp *operator.Operator) (context.Context, *Operator) {
 	ociOptions := options.FromContext(ctx)
-	lo.Must0(ociOptions.Validate())
+	lo.Must0(ociOptions.ValidateWithCoreOptions(coreoptions.FromContext(ctx)))
 
 	restConfig := config.GetConfigOrDie()
 	clientSet := kubernetes.NewForConfigOrDie(restConfig)

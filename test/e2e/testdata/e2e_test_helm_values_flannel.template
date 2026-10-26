@@ -9,6 +9,8 @@ image:
   repositoryName: VAR_IMAGE_REPOSITORY_NAME
   tag: VAR_IMAGE_TAG
 settings:
+  featureGates:
+    podDeletionCostManagement: true
   # -- Cluster compartment OCID
   clusterCompartmentId: "VAR_COMPARTMENT_ID"
   # -- Cluster's VCN compartment OCID

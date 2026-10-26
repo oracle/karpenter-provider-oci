@@ -184,7 +184,7 @@ func (c *Controller) cordonNode(ctx context.Context, node *v1.Node) error {
 }
 
 func (c *Controller) drainNode(ctx context.Context, node *v1.Node) (bool, error) {
-	pods, err := nodeutils.GetPods(ctx, c.kubeClient, node)
+	pods, err := nodeutils.GetPods(ctx, c.kubeClient, node.Name)
 	if err != nil {
 		return false, fmt.Errorf("listing pods on node, %w", err)
 	}

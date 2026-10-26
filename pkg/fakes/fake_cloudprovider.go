@@ -15,8 +15,11 @@ import (
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 )
 
+var _ cloudprovider.CloudProvider = (*FakeCloudProvider)(nil)
+
 type FakeCloudProvider struct {
 	CreateStub                  func(context.Context, *v1.NodeClaim) (*v1.NodeClaim, error)
+	RebootStub                  func(context.Context, *v1.NodeClaim, string) error
 	DeleteStub                  func(context.Context, *v1.NodeClaim) error
 	GetStub                     func(context.Context, string) (*v1.NodeClaim, error)
 	ListStub                    func(context.Context) ([]*v1.NodeClaim, error)
@@ -33,6 +36,13 @@ func (f *FakeCloudProvider) Create(ctx context.Context, nc *v1.NodeClaim) (*v1.N
 
 func (f *FakeCloudProvider) Delete(ctx context.Context, nc *v1.NodeClaim) error {
 	return f.DeleteStub(ctx, nc)
+}
+
+func (f *FakeCloudProvider) Reboot(ctx context.Context, nc *v1.NodeClaim, operationID string) error {
+	if f.RebootStub != nil {
+		return f.RebootStub(ctx, nc, operationID)
+	}
+	return cloudprovider.NewNodeRebootNotImplementedError()
 }
 
 func (f *FakeCloudProvider) Get(ctx context.Context, providerId string) (*v1.NodeClaim, error) {
