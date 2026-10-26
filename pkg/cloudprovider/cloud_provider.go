@@ -43,6 +43,8 @@ import (
 	coreapis "sigs.k8s.io/karpenter/pkg/apis"
 	corev1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
+	"sigs.k8s.io/karpenter/pkg/controllers/nodeoverlay"
+	coreoptions "sigs.k8s.io/karpenter/pkg/operator/options"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 	"sigs.k8s.io/karpenter/pkg/utils/resources"
 )
@@ -50,6 +52,7 @@ import (
 type CloudProvider struct {
 	kubeClient                  client.Client
 	instanceTypeProvider        instancetype.Provider
+	instanceTypeStore           *nodeoverlay.InstanceTypeStore
 	imageProvider               image.Provider
 	networkProvider             network.Provider
 	kmsKeyProvider              kms.Provider
@@ -66,11 +69,13 @@ type CloudProvider struct {
 func New(ctx context.Context, client client.Client, itp instancetype.Provider, imgp image.Provider,
 	nwp network.Provider, kkp kms.Provider, ip instance.Provider, pp placement.Provider,
 	cp capacityreservation.Provider, bsp blockstorage.Provider, npn npn.Provider,
+	instanceTypeStore *nodeoverlay.InstanceTypeStore,
 	repairPolicies []cloudprovider.RepairPolicy, enableServiceLimitFallback bool,
 	startAsync <-chan struct{}) (*CloudProvider, error) {
 	c := &CloudProvider{
 		kubeClient:                  client,
 		instanceTypeProvider:        itp,
+		instanceTypeStore:           instanceTypeStore,
 		imageProvider:               imgp,
 		networkProvider:             nwp,
 		kmsKeyProvider:              kkp,
@@ -314,6 +319,22 @@ func (c *CloudProvider) resolveInstanceTypes(ctx context.Context,
 	instanceTypes, err := c.instanceTypeProvider.ListInstanceTypes(ctx, nodeClass, nodeClaim.Spec.Taints)
 	if err != nil {
 		return nil, err
+	}
+
+	// Apply scheduling overlays before filtering and ordering launch candidates.
+	if coreoptions.FromContext(ctx).FeatureGates.NodeOverlay {
+		overlaidInstanceTypes, err := c.instanceTypeStore.ApplyAll(nodeClaim.Labels[corev1.NodePoolLabelKey],
+			lo.Map(instanceTypes, func(it *instancetype.OciInstanceType, _ int) *cloudprovider.InstanceType {
+				return &it.InstanceType
+			}))
+		if err != nil {
+			return nil, fmt.Errorf("applying nodeoverlays, %w", err)
+		}
+		instanceTypes = lo.Map(instanceTypes, func(it *instancetype.OciInstanceType, i int) *instancetype.OciInstanceType {
+			updated := it.CopyAndUpdateOfferings(overlaidInstanceTypes[i].Offerings)
+			updated.Capacity = overlaidInstanceTypes[i].Capacity
+			return updated
+		})
 	}
 
 	/*

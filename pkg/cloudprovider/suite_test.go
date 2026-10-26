@@ -30,6 +30,7 @@ import (
 	ocicore "github.com/oracle/oci-go-sdk/v65/core"
 	v1 "k8s.io/api/core/v1"
 	corev1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	coreoptions "sigs.k8s.io/karpenter/pkg/operator/options"
 
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -62,6 +63,7 @@ var _ = BeforeSuite(func() {
 
 	ctx, cancel = context.WithCancel(context.TODO())
 	ctx = options.ToContext(ctx, &options.Options{})
+	ctx = coreoptions.ToContext(ctx, &coreoptions.Options{})
 
 	var err error
 	err = ocioraclecouldcomv1beta1.AddToScheme(scheme.Scheme)

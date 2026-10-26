@@ -108,7 +108,7 @@
   "NodeOverlayTest": {
     "Name": "prefer-standard224",
     "CandidateShapes": [
-      "VM.Standard2.1",
+      "VM.Standard2.4",
       "VM.Standard2.24"
     ],
     "PreferredShape": "VM.Standard2.24",

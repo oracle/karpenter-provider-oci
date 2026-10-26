@@ -46,9 +46,12 @@ import (
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	clientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/apis/v1alpha1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/controllers/dynamicresources/deviceallocation"
+	"sigs.k8s.io/karpenter/pkg/controllers/nodeoverlay"
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/events"
@@ -129,7 +132,7 @@ var _ = Describe("CloudProvider Integration Tests", func() {
 			cpgProvider))
 		cloudProvider = lo.Must(New(ctx, k8sClient, instancetypeProvider, imageProvider,
 			networkProvider, kmsProvider, instanceProvider, placementProvider,
-			crProvider, bsProvider, npnProvider, nil, false, fakes.NewDummyChannel()))
+			crProvider, bsProvider, npnProvider, nodeoverlay.NewInstanceTypeStore(), nil, false, fakes.NewDummyChannel()))
 	})
 
 	It("should create nodeclaim with nodeclass hash", func() {
@@ -587,7 +590,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 		})
 
 		It("should reject creates before the cloud provider is initialized", func() {
-			_, err := (&CloudProvider{}).Create(context.Background(), nodeClaim)
+			_, err := (&CloudProvider{}).Create(ctx, nodeClaim)
 			Expect(err).To(MatchError(ContainSubstring("cloud-provider is not ready for use")))
 		})
 
@@ -597,7 +600,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 				instanceTypes: []*instancetype.OciInstanceType{instanceA},
 			})
 
-			_, err := cp.Create(context.Background(), nodeClaim)
+			_, err := cp.Create(ctx, nodeClaim)
 			var createErr *cloudprovider.CreateError
 			Expect(errors.As(err, &createErr)).To(BeTrue())
 			Expect(createErr.ConditionReason).To(Equal("OciNodeClassNotFound"))
@@ -609,8 +612,59 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 				instanceTypes: nil,
 			})
 
-			_, err := cp.Create(context.Background(), nodeClaim)
+			_, err := cp.Create(ctx, nodeClaim)
 			Expect(cloudprovider.IsInsufficientCapacityError(err)).To(BeTrue())
+		})
+
+		It("should launch the lowest-priced shape after applying node overlays", func() {
+			instanceA = testInstanceType("VM.Standard2.4", 0.2552)
+			instanceB = testInstanceType("VM.Standard2.24", 1.5312)
+			overlayCtx := coreoptions.ToContext(ctx, coretest.Options(coretest.OptionsFields{
+				FeatureGates: coretest.FeatureGates{NodeOverlay: lo.ToPtr(true)},
+			}))
+			kubeClient = clientfake.NewClientBuilder().WithScheme(scheme.Scheme).
+				WithObjects(nodeClass, nodePool).WithStatusSubresource(&v1alpha1.NodeOverlay{}).Build()
+			var launchedShapes []string
+			cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
+				kubeClient:    kubeClient,
+				instanceTypes: []*instancetype.OciInstanceType{instanceA, instanceB},
+				instanceProvider: &FakeInstanceProvider{
+					LaunchInstanceFn: func(_ context.Context, nc *v1.NodeClaim, _ *v1beta1.OCINodeClass,
+						it *instancetype.OciInstanceType, _ *image.ImageResolveResult, _ *network.NetworkResolveResult,
+						_ *kms.KmsKeyResolveResult, _ *placement.Proposal) (*instance.InstanceInfo, error) {
+						launchedShapes = append(launchedShapes, it.Shape)
+						return &instance.InstanceInfo{Instance: testInstanceWithShape(it.Shape, nc.Labels[v1.NodePoolLabelKey])}, nil
+					},
+				},
+			})
+			clk := clock.RealClock{}
+			overlayController := nodeoverlay.NewController(clk, kubeClient, cp, cp.instanceTypeStore,
+				state.NewCluster(clk, kubeClient, cp))
+
+			_, err := overlayController.Reconcile(overlayCtx, reconcile.Request{})
+			Expect(err).ToNot(HaveOccurred())
+			_, err = cp.Create(overlayCtx, nodeClaim)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(launchedShapes).To(Equal([]string{"VM.Standard2.4"}))
+
+			overlay := coretest.NodeOverlay(v1alpha1.NodeOverlay{
+				Spec: v1alpha1.NodeOverlaySpec{
+					Requirements: []v1alpha1.NodeSelectorRequirement{
+						{Key: v1.NodePoolLabelKey, Operator: corev1.NodeSelectorOpIn, Values: []string{nodePool.Name}},
+						{Key: corev1.LabelInstanceTypeStable, Operator: corev1.NodeSelectorOpIn, Values: []string{instanceB.Name}},
+					},
+					PriceAdjustment: lo.ToPtr("-99%"),
+					Weight:          lo.ToPtr(int32(100)),
+				},
+			})
+			Expect(kubeClient.Create(overlayCtx, overlay)).To(Succeed())
+			_, err = overlayController.Reconcile(overlayCtx, reconcile.Request{})
+			Expect(err).ToNot(HaveOccurred())
+			_, err = cp.Create(overlayCtx, nodeClaim)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(launchedShapes).To(Equal([]string{"VM.Standard2.4", "VM.Standard2.24"}))
+			Expect(instanceA.Offerings[0].Price).To(Equal(0.2552))
+			Expect(instanceB.Offerings[0].Price).To(Equal(1.5312))
 		})
 
 		It("should fall back to the next instance type when image resolution fails", func() {
@@ -635,7 +689,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 				},
 			})
 
-			created, err := cp.Create(context.Background(), nodeClaim)
+			created, err := cp.Create(ctx, nodeClaim)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(created.Labels[corev1.LabelInstanceTypeStable]).To(Equal("shape-b"))
 		})
@@ -678,7 +732,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 				},
 			})
 
-			created, err := cp.Create(context.Background(), nodeClaim)
+			created, err := cp.Create(ctx, nodeClaim)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(created).ToNot(BeNil())
 			// Both shape configs were attempted: the first failed with OOHC, the second succeeded.
@@ -717,7 +771,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 				},
 			})
 
-			created, err := cp.Create(context.Background(), nodeClaim)
+			created, err := cp.Create(ctx, nodeClaim)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(created.Labels[corev1.LabelInstanceTypeStable]).To(Equal("shape-b"))
 			Expect(launchCount).To(Equal(2))
@@ -744,7 +798,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 				},
 			})
 
-			_, err := cp.Create(context.Background(), nodeClaim)
+			_, err := cp.Create(ctx, nodeClaim)
 			Expect(cloudprovider.IsInsufficientCapacityError(err)).To(BeTrue())
 			var createErr *cloudprovider.CreateError
 			Expect(errors.As(err, &createErr)).To(BeFalse())
@@ -770,7 +824,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 				},
 			})
 
-			_, err := cp.Create(context.Background(), nodeClaim)
+			_, err := cp.Create(ctx, nodeClaim)
 			var createErr *cloudprovider.CreateError
 			Expect(errors.As(err, &createErr)).To(BeTrue())
 			Expect(createErr.ConditionReason).To(Equal("LaunchInstanceFailed"))
@@ -797,7 +851,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 				},
 			})
 
-			_, err := cp.Create(context.Background(), nodeClaim)
+			_, err := cp.Create(ctx, nodeClaim)
 			Expect(cloudprovider.IsInsufficientCapacityError(err)).To(BeTrue())
 			Expect(launchCount).To(Equal(2))
 		})
@@ -824,7 +878,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 				},
 			})
 
-			_, err := cp.Create(context.Background(), nodeClaim)
+			_, err := cp.Create(ctx, nodeClaim)
 			Expect(cloudprovider.IsInsufficientCapacityError(err)).To(BeTrue())
 			Expect(launchCount).To(Equal(2))
 		})
@@ -850,7 +904,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 				},
 			})
 
-			_, err := cp.Create(context.Background(), nodeClaim)
+			_, err := cp.Create(ctx, nodeClaim)
 			var createErr *cloudprovider.CreateError
 			Expect(errors.As(err, &createErr)).To(BeTrue())
 			Expect(cloudprovider.IsInsufficientCapacityError(err)).To(BeFalse())
@@ -882,7 +936,7 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 				},
 			})
 
-			created, err := cp.Create(context.Background(), nodeClaim)
+			created, err := cp.Create(ctx, nodeClaim)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(created.Labels[corev1.LabelInstanceTypeStable]).To(Equal("shape-b"))
 			Expect(launchCount).To(Equal(2))
@@ -1009,6 +1063,7 @@ func newUnitTestCloudProvider(opts unitTestCloudProviderOptions) *CloudProvider 
 		initialized:                 true,
 		kubeClient:                  kubeClient,
 		instanceTypeProvider:        instanceTypeProvider,
+		instanceTypeStore:           nodeoverlay.NewInstanceTypeStore(),
 		imageProvider:               &FakeImageProvider{ResolveImageForShapeFn: defaultResolveImageForShape},
 		networkProvider:             &FakeNetworkProvider{},
 		kmsKeyProvider:              &FakeKmsProvider{},

@@ -492,6 +492,7 @@ func (s *E2ETestSuite) TestNodeOverlay() {
 			"should be able to get main nodepool")
 		originalRequirements := append([]karpenterv1.NodeSelectorRequirementWithMinValues(nil),
 			mainNodePool.Spec.Template.Spec.Requirements...)
+		originalConsolidateAfter := mainNodePool.Spec.Disruption.ConsolidateAfter
 
 		t.Log("Scaling workload down and deleting existing NodeClaims before applying NodeOverlay")
 		s.ensureDeploymentReplicas(s.testConfig.TestDeployment.Name, s.testConfig.Namespace, 0)
@@ -504,6 +505,21 @@ func (s *E2ETestSuite) TestNodeOverlay() {
 			[]string{corev1.LabelInstanceTypeStable, ociv1beta1.OciInstanceShape},
 			map[string][]string{ociv1beta1.OciInstanceShape: s.testConfig.NodeOverlayTest.CandidateShapes},
 		), "failed to patch nodepool for nodeoverlay test")
+
+		t.Cleanup(func() {
+			require.NoError(t, s.ctrlClient.Get(s.ctx, client.ObjectKey{Name: s.testConfig.NodePool.Name}, mainNodePool))
+			patched := mainNodePool.DeepCopy()
+			patched.Spec.Disruption.ConsolidateAfter = originalConsolidateAfter
+			patched.Spec.Template.Spec.Requirements = originalRequirements
+			require.NoError(t, s.ctrlClient.Patch(s.ctx, patched, client.MergeFrom(mainNodePool)),
+				"failed to restore nodepool settings")
+		})
+		// Consolidation could otherwise replace an incorrect initial launch and mask the failure.
+		require.NoError(t, s.ctrlClient.Get(s.ctx, client.ObjectKey{Name: s.testConfig.NodePool.Name}, mainNodePool))
+		patched := mainNodePool.DeepCopy()
+		patched.Spec.Disruption.ConsolidateAfter = karpenterv1.NillableDuration{}
+		require.NoError(t, s.ctrlClient.Patch(s.ctx, patched, client.MergeFrom(mainNodePool)),
+			"failed to disable consolidation for nodeoverlay test")
 
 		t.Logf("Creating NodeOverlay %s and waiting for Ready", s.testConfig.NodeOverlayTest.Name)
 		require.NoError(t, s.createNodeOverlay(), "failed to create nodeoverlay")
@@ -542,6 +558,11 @@ func (s *E2ETestSuite) TestNodeOverlay() {
 		require.NoError(t, s.checkPodsReady(s.testConfig.TestDeployment.Name, int(s.testConfig.TestDeployment.Replicas)),
 			"all pods should be running after nodeoverlay test")
 
+		require.NoError(t, s.ctrlClient.Get(s.ctx, client.ObjectKey{Name: s.testConfig.NodePool.Name}, mainNodePool))
+		patched = mainNodePool.DeepCopy()
+		patched.Spec.Disruption.ConsolidateAfter = originalConsolidateAfter
+		require.NoError(t, s.ctrlClient.Patch(s.ctx, patched, client.MergeFrom(mainNodePool)),
+			"failed to restore consolidation before nodeoverlay cleanup")
 		t.Log("Scaling workload down and removing NodeOverlay before restoring NodePool requirements")
 		s.ensureDeploymentReplicas(s.testConfig.TestDeployment.Name, s.testConfig.Namespace, 0)
 		s.ensureAllNodeClaimDeleted()
@@ -550,8 +571,10 @@ func (s *E2ETestSuite) TestNodeOverlay() {
 		t.Logf("Restoring original requirements on NodePool %s", s.testConfig.NodePool.Name)
 		require.NoError(t, s.ctrlClient.Get(s.ctx, client.ObjectKey{Name: s.testConfig.NodePool.Name}, mainNodePool),
 			"should be able to get nodepool for restore")
-		mainNodePool.Spec.Template.Spec.Requirements = originalRequirements
-		require.NoError(t, s.ctrlClient.Update(s.ctx, mainNodePool), "failed to restore nodepool requirements")
+		patched = mainNodePool.DeepCopy()
+		patched.Spec.Template.Spec.Requirements = originalRequirements
+		require.NoError(t, s.ctrlClient.Patch(s.ctx, patched, client.MergeFrom(mainNodePool)),
+			"failed to restore nodepool requirements")
 
 		t.Log("Scaling workload back up and validating baseline provisioning after cleanup")
 		s.ensureDeploymentReplicas(s.testConfig.TestDeployment.Name, s.testConfig.Namespace,

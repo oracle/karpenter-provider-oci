@@ -58,6 +58,7 @@ func main() {
 		op.CapacityReservationProvider,
 		op.BlockStorageProvider,
 		op.NpnProvider,
+		op.InstanceTypeStore,
 		ociOptions.RepairPolicies,
 		ociOptions.EnableUnavailableOfferingsOnServiceLimitExceeded,
 		op.Elected(),
