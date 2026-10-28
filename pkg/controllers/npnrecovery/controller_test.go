@@ -111,8 +111,32 @@ type testEnv struct {
 	network    *fakeNetworkProvider
 }
 
+// emptyNodeClass sets only the volume config, which StatusConditions dereferences.
+func emptyNodeClass() *ociv1beta1.OCINodeClass {
+	return &ociv1beta1.OCINodeClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "default"},
+		Spec: ociv1beta1.OCINodeClassSpec{
+			VolumeConfig: &ociv1beta1.VolumeConfig{BootVolumeConfig: &ociv1beta1.BootVolumeConfig{}},
+		},
+	}
+}
+
+func readyNodeClass() *ociv1beta1.OCINodeClass {
+	nodeClass := emptyNodeClass()
+	nodeClass.Generation = 2
+	// Ready is derived from these, so setting them is what makes the NodeClass ready.
+	nodeClass.StatusConditions().SetTrue(ociv1beta1.ConditionTypeImageReady)
+	nodeClass.StatusConditions().SetTrue(ociv1beta1.ConditionTypeNetworkReady)
+	nodeClass.StatusConditions().SetTrue(ociv1beta1.ConditionTypeNodeCompartment)
+	return nodeClass
+}
+
 func newTestEnv(t *testing.T, sinceLaunch time.Duration, objs ...client.Object) *testEnv {
-	nodeClass := &ociv1beta1.OCINodeClass{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
+	return newTestEnvWithNodeClass(t, sinceLaunch, readyNodeClass(), objs...)
+}
+
+func newTestEnvWithNodeClass(t *testing.T, sinceLaunch time.Duration, nodeClass *ociv1beta1.OCINodeClass,
+	objs ...client.Object) *testEnv {
 	kubeClient := fake.NewClientBuilder().WithScheme(testScheme(t)).
 		WithObjects(append(objs, nodeClass)...).
 		WithStatusSubresource(&karpv1.NodeClaim{}).Build()
@@ -225,6 +249,74 @@ func TestReconcile_IgnoresNodeClaimsOutOfScope(t *testing.T) {
 			assert.Zero(t, result)
 			assert.False(t, env.npnExists(t))
 			assert.True(t, env.nodeClaimExists(t))
+		})
+	}
+}
+
+func TestReconcile_WaitsForNodeClassReadiness(t *testing.T) {
+	for name, nodeClass := range map[string]*ociv1beta1.OCINodeClass{
+		"not ready": func() *ociv1beta1.OCINodeClass {
+			nc := readyNodeClass()
+			nc.StatusConditions().SetFalse(ociv1beta1.ConditionTypeNetworkReady, "SubnetNotFound", "subnet not found")
+			return nc
+		}(),
+		"ready for an older generation": func() *ociv1beta1.OCINodeClass {
+			nc := readyNodeClass()
+			nc.Generation = 3
+			return nc
+		}(),
+		"no ready condition": emptyNodeClass(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			nc := launchedNodeClaim()
+			env := newTestEnvWithNodeClass(t, 2*time.Minute, nodeClass, nc)
+
+			result, err := env.controller.Reconcile(context.Background(), nc)
+			require.NoError(t, err)
+			assert.Equal(t, nodeClassNotReadyRequeue, result.RequeueAfter)
+			assert.False(t, env.npnExists(t))
+			assert.True(t, env.nodeClaimExists(t))
+		})
+	}
+}
+
+func TestReconcile_DeletesNodeClaimWhenNodeClassStaysNotReady(t *testing.T) {
+	nodeClass := readyNodeClass()
+	nodeClass.StatusConditions().SetFalse(ociv1beta1.ConditionTypeNetworkReady, "SubnetNotFound", "subnet not found")
+	nc := launchedNodeClaim()
+	env := newTestEnvWithNodeClass(t, recoveryTimeout, nodeClass, nc)
+
+	_, err := env.controller.Reconcile(context.Background(), nc)
+	require.NoError(t, err)
+	assert.False(t, env.nodeClaimExists(t))
+}
+
+func TestReconcile_ChecksNodeClassDrift(t *testing.T) {
+	for name, tc := range map[string]struct {
+		nodeClassHash, nodeClassHashVersion string
+		recreated                           bool
+	}{
+		"matching hashes":       {nodeClassHash: "hash-a", nodeClassHashVersion: "v1", recreated: true},
+		"static field drift":    {nodeClassHash: "hash-b", nodeClassHashVersion: "v1"},
+		"hash version mismatch": {nodeClassHash: "hash-a", nodeClassHashVersion: "v2"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			nodeClass := readyNodeClass()
+			nodeClass.Annotations = map[string]string{
+				ociv1beta1.NodeClassHash:        tc.nodeClassHash,
+				ociv1beta1.NodeClassHashVersion: tc.nodeClassHashVersion,
+			}
+			nc := launchedNodeClaim()
+			nc.Annotations = map[string]string{
+				ociv1beta1.NodeClassHash:        "hash-a",
+				ociv1beta1.NodeClassHashVersion: "v1",
+			}
+			env := newTestEnvWithNodeClass(t, 2*time.Minute, nodeClass, nc)
+
+			_, err := env.controller.Reconcile(context.Background(), nc)
+			require.NoError(t, err)
+			assert.Equal(t, tc.recreated, env.npnExists(t))
+			assert.Equal(t, tc.recreated, env.nodeClaimExists(t))
 		})
 	}
 }

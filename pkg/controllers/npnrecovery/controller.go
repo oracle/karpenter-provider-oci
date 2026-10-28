@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/awslabs/operatorpkg/reasonable"
+	"github.com/awslabs/operatorpkg/status"
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
+	ocicloudprovider "github.com/oracle/karpenter-provider-oci/pkg/cloudprovider"
 	npnv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/npn/apis/v1beta1"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/instance"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/network"
@@ -41,10 +43,13 @@ const gracePeriod = 1 * time.Minute
 // recoveryTimeout is how long after launch the NPN may stay missing before the NodeClaim is deleted.
 const recoveryTimeout = 15 * time.Minute
 
+// nodeClassNotReadyRequeue is how long to wait before checking again whether the NodeClass is ready.
+const nodeClassNotReadyRequeue = 30 * time.Second
+
 // Controller recreates the NativePodNetwork of a launched NodeClaim when CloudProvider.Create failed to
 // create it. Without it the node registers but never initializes, and core karpenter reclaims neither.
-// If the NPN still cannot be created within recoveryTimeout, the NodeClaim is deleted so karpenter
-// terminates the instance and provisions a replacement.
+// If the NPN still cannot be created within recoveryTimeout, or the NodeClass has drifted since launch, the
+// NodeClaim is deleted so karpenter terminates the instance and provisions a replacement.
 //
 // All state is read from the cluster on every reconcile, so recovery carries on across restarts.
 type Controller struct {
@@ -106,8 +111,30 @@ func (c *Controller) Reconcile(ctx context.Context, nodeClaim *corev1.NodeClaim)
 		return reconcile.Result{}, client.IgnoreNotFound(c.kubeClient.Delete(ctx, nodeClaim))
 	}
 
+	nodeClass := &ociv1beta1.OCINodeClass{}
+	if err := c.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name},
+		nodeClass); err != nil {
+		return reconcile.Result{}, fmt.Errorf("getting nodeclass, %w", err)
+	}
+
+	// the NPN is built from the NodeClass, so wait until it reflects the current spec. The timeout above
+	// still applies while waiting.
+	if ready := nodeClass.StatusConditions().Get(status.ConditionReady); !ready.IsTrue() ||
+		ready.ObservedGeneration != nodeClass.Generation {
+		lg.Info("NPN missing but nodeclass is not ready, waiting", "nodeClass", nodeClass.Name)
+		return reconcile.Result{RequeueAfter: nodeClassNotReadyRequeue}, nil
+	}
+
+	// settings such as ipCount and maxPods are fixed when the instance bootstraps, so an NPN built from a
+	// changed NodeClass would not match it. Drift disruption cannot replace an uninitialized node, so
+	// replace it here instead.
+	if reason := ocicloudprovider.AreStaticFieldsDrifted(ctx, nodeClaim, nodeClass); reason != "" {
+		lg.Info("NPN missing and nodeclass has drifted since launch, deleting nodeclaim", "reason", reason)
+		return reconcile.Result{}, client.IgnoreNotFound(c.kubeClient.Delete(ctx, nodeClaim))
+	}
+
 	lg.Info("NPN missing for launched nodeclaim, recreating it")
-	if err := c.createNpn(ctx, nodeClaim); err != nil {
+	if err := c.createNpn(ctx, nodeClaim, nodeClass); err != nil {
 		// returning the error retries with the workqueue's exponential backoff, capped at a minute, so the
 		// timeout above is still reached promptly.
 		return reconcile.Result{}, fmt.Errorf("recreating NPN %s, %w", npnName, err)
@@ -115,13 +142,8 @@ func (c *Controller) Reconcile(ctx context.Context, nodeClaim *corev1.NodeClaim)
 	return reconcile.Result{}, nil
 }
 
-func (c *Controller) createNpn(ctx context.Context, nodeClaim *corev1.NodeClaim) error {
-	nodeClass := &ociv1beta1.OCINodeClass{}
-	if err := c.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name},
-		nodeClass); err != nil {
-		return fmt.Errorf("getting nodeclass, %w", err)
-	}
-
+func (c *Controller) createNpn(ctx context.Context, nodeClaim *corev1.NodeClaim,
+	nodeClass *ociv1beta1.OCINodeClass) error {
 	inst, err := c.instanceProvider.GetInstanceCached(ctx, nodeClaim.Status.ProviderID)
 	if err != nil {
 		return fmt.Errorf("getting instance, %w", err)
