@@ -257,8 +257,8 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *corev1.NodeClaim)
 				npnApplyError.Error())
 			lg.Error(npnApplyError, errMsg)
 			// We shouldn't return errors from here because if only NPN apply failed it will keep creating new compute instances
-			// If NPN apply failed the node claims will end up not able to join the cluster and will be terminated eventually
-			// return nil, cloudprovider.NewCreateError(err, "LaunchInstanceFailed", errMsg)
+			// The node will still register but never initialize without its NPN; the npnrecovery controller recreates
+			// the missing NPN, or deletes the NodeClaim if it cannot.
 		}
 	} else {
 		lg.Info("Skipping NPN Object creation")

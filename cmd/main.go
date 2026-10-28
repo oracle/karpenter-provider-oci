@@ -88,6 +88,7 @@ func main() {
 			op.Manager,
 			op.Clock,
 			op.GetClient(),
+			op.Manager.GetAPIReader(),
 			op.ClientSet,
 			op.EventRecorder,
 			op.ImageProvider,
@@ -99,6 +100,8 @@ func main() {
 			op.ClusterPlacementGroupProvider,
 			cloudProvider,
 			op.CapacityDiscoveryProvider,
+			op.InstanceProvider,
+			op.NpnProvider,
 		)...).
 		Start(ctx)
 }

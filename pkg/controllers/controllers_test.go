@@ -13,6 +13,7 @@ import (
 
 	"github.com/awslabs/operatorpkg/controller"
 	"github.com/oracle/karpenter-provider-oci/pkg/controllers/capacitydiscovery"
+	"github.com/oracle/karpenter-provider-oci/pkg/controllers/npnrecovery"
 	"github.com/oracle/karpenter-provider-oci/pkg/fakes"
 	"github.com/oracle/karpenter-provider-oci/pkg/operator/options"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacityreservation"
@@ -23,6 +24,7 @@ import (
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/instance"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/kms"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/network"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/npn"
 	"github.com/samber/lo"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -62,12 +64,16 @@ var _ = Describe("OCINodeClass Reconciler", func() {
 		cpgProvider := clusterplacementgroup.NewProvider(ctx, fakes.NewFakeClusterPlacementGroupClient(
 			nodeClassClusterCompartmentId), nodeClassClusterCompartmentId)
 
-		newControllers := func(discoveryEnabled bool) []controller.Controller {
-			return NewControllers(ctx, nil, nil, nil, fake.NewClientset(),
+		newNpnControllers := func(discoveryEnabled, npnCluster bool) []controller.Controller {
+			npnProvider := lo.Must(npn.NewProvider(ctx, npnCluster, []network.IpFamily{network.IPv4}))
+			return NewControllers(ctx, nil, nil, nil, nil, fake.NewClientset(),
 				&fakes.FakeEventRecorder{}, imageProvider, kmsProvider, networkProvider, crProvider,
 				computeClusterProvider, identityProvider, cpgProvider, &fakes.FakeCloudProvider{},
-				&fakeCapacityProvider{enabled: discoveryEnabled},
+				&fakeCapacityProvider{enabled: discoveryEnabled}, nil, npnProvider,
 			)
+		}
+		newControllers := func(discoveryEnabled bool) []controller.Controller {
+			return newNpnControllers(discoveryEnabled, false)
 		}
 
 		hasCapacityController := func(cs []controller.Controller) bool {
@@ -86,6 +92,17 @@ var _ = Describe("OCINodeClass Reconciler", func() {
 		// dropping a different one would not pass.
 		Expect(newControllers(false)).To(HaveLen(2))
 		Expect(hasCapacityController(newControllers(false))).To(BeFalse())
+
+		// The NPN recovery controller only belongs on clusters using VCN-native pod networking.
+		hasNpnRecoveryController := func(cs []controller.Controller) bool {
+			return lo.ContainsBy(cs, func(c controller.Controller) bool {
+				_, ok := c.(*npnrecovery.Controller)
+				return ok
+			})
+		}
+		Expect(hasNpnRecoveryController(newControllers(true))).To(BeFalse())
+		Expect(newNpnControllers(true, true)).To(HaveLen(4))
+		Expect(hasNpnRecoveryController(newNpnControllers(true, true))).To(BeTrue())
 	})
 })
 

@@ -13,6 +13,7 @@ import (
 	"github.com/awslabs/operatorpkg/controller"
 	"github.com/oracle/karpenter-provider-oci/pkg/controllers/capacitydiscovery"
 	"github.com/oracle/karpenter-provider-oci/pkg/controllers/nodeclasses"
+	"github.com/oracle/karpenter-provider-oci/pkg/controllers/npnrecovery"
 	"github.com/oracle/karpenter-provider-oci/pkg/controllers/orphaninstance"
 	discovery "github.com/oracle/karpenter-provider-oci/pkg/providers/capacitydiscovery"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacityreservation"
@@ -20,8 +21,10 @@ import (
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/computecluster"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/identity"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/image"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/instance"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/kms"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/network"
+	"github.com/oracle/karpenter-provider-oci/pkg/providers/npn"
 	"github.com/samber/lo"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/clock"
@@ -36,6 +39,7 @@ func NewControllers(
 	mgr manager.Manager,
 	clk clock.Clock,
 	kubeClient client.Client,
+	apiReader client.Reader,
 	clientSet kubernetes.Interface,
 	recorder events.Recorder,
 	imageProvider image.Provider,
@@ -47,6 +51,8 @@ func NewControllers(
 	clusterPlacementGroupProvider clusterplacementgroup.Provider,
 	cloudProvider cloudprovider.CloudProvider,
 	capacityProvider discovery.Recorder,
+	instanceProvider instance.Provider,
+	npnProvider npn.Provider,
 ) []controller.Controller {
 	var controllers []controller.Controller
 
@@ -64,6 +70,12 @@ func NewControllers(
 	// reading NodeClaims and NodeClasses to produce measurements nothing would store.
 	if capacityProvider.Enabled() {
 		controllers = append(controllers, capacitydiscovery.NewController(kubeClient, cloudProvider, capacityProvider))
+	}
+
+	// Recreates NativePodNetworks that CloudProvider.Create failed to create, which only exist on NPN clusters.
+	if npnProvider.NpnCluster() {
+		controllers = append(controllers, npnrecovery.NewController(clk, kubeClient, apiReader, cloudProvider,
+			instanceProvider, networkProvider, npnProvider))
 	}
 
 	return controllers
