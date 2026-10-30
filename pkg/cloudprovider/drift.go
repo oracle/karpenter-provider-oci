@@ -30,11 +30,11 @@ const (
 )
 
 type InstanceDesiredState struct {
-	InstanceType          *instancetype.OciInstanceType
-	CompartmentOcid       string
-	Image                 *ocicore.Image
-	NodeClass             *v1beta1.OCINodeClass
-	CapacityReservationId *string
+	InstanceType           *instancetype.OciInstanceType
+	CompartmentOcid        string
+	Image                  *ocicore.Image
+	NodeClass              *v1beta1.OCINodeClass
+	CapacityReservationIds []string
 }
 
 func IsInstanceDrifted(d *InstanceDesiredState, i *ocicore.Instance) (cloudprovider.DriftReason, error) {
@@ -61,7 +61,11 @@ func IsInstanceDrifted(d *InstanceDesiredState, i *ocicore.Instance) (cloudprovi
 		return "imageMismatch", nil
 	}
 
-	if lo.FromPtr(d.CapacityReservationId) != lo.FromPtr(i.CapacityReservationId) {
+	if len(d.CapacityReservationIds) == 0 {
+		if i.CapacityReservationId != nil {
+			return CapacityReservationMismatch, nil
+		}
+	} else if i.CapacityReservationId == nil || !lo.Contains(d.CapacityReservationIds, *i.CapacityReservationId) {
 		return CapacityReservationMismatch, nil
 	}
 
