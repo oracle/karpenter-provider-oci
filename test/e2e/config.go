@@ -122,6 +122,21 @@ type StaticCapacityTestConfig struct {
 	InstanceTypes   []string
 }
 
+type PlatformConfigTestConfig struct {
+	Shape         string
+	ShapeConfig   ociv1beta1.ShapeConfig
+	KubeletConfig ociv1beta1.KubeletConfiguration
+	Initial       PlatformConfigTestCase
+	Drift         PlatformConfigTestCase
+}
+
+type PlatformConfigTestCase struct {
+	PlatformConfig *ociv1beta1.PlatformConfig
+	CPU            string
+	AllocatableCPU string
+	Pods           string
+}
+
 type KarpenterE2ETestConfig struct {
 	// Oci Profile used to run the test
 	OciAuthMethodForTest string
@@ -137,6 +152,7 @@ type KarpenterE2ETestConfig struct {
 	NodeOverlayTest    NodeOverlayTestConfig
 	CapacityBufferTest CapacityBufferTestConfig
 	StaticCapacityTest StaticCapacityTestConfig
+	PlatformConfigTest PlatformConfigTestConfig
 	DriftTestData      DriftTestData
 	OciVcnIpNative     bool
 }

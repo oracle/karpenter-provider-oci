@@ -42,6 +42,8 @@ KPO combines the `OCINodeClass` with a Karpenter `NodePool` during provisioning.
   - If you prefer a global default, you can also set `settings.flexibleShapeConfigs` in the Helm values and override it here when needed.
 - `spec.kubeletConfig`
   - Configure kubelet limits and reservations (`maxPods`, `podsPerCore`, `systemReserved`, `kubeReserved`, etc.).
+- `spec.platformConfig`
+  - Set the OCI Compute platform configuration for launched instances. See [Platform Configuration](platform-config.md).
 - `spec.agentPlugins`
   - Optional list of Oracle Cloud Agent plugin names to enable on each launched instance. See [Oracle Cloud Agent plugins](agent-plugins.md) for examples, prerequisites, and lifecycle behavior.
 
@@ -74,3 +76,4 @@ Key areas to inspect in `status`:
 - Node selection and OCI labels: [Scheduling Labels](scheduling-labels.md)
 - Example configs: [Usage](usage.md)
 - Oracle Cloud Agent plugins: [Agent Plugins](agent-plugins.md)
+- [Platform Configuration](platform-config.md)

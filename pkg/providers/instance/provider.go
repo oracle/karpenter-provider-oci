@@ -226,6 +226,7 @@ func (p *DefaultProvider) LaunchInstance(ctx context.Context,
 			DisplayName:               &nodeClaim.Name,
 			FreeformTags:              freeFormTags,
 			Metadata:                  metadata,
+			PlatformConfig:            buildPlatformConfig(nodeClass.Spec.PlatformConfig, instanceType.PlatformType),
 			PreemptibleInstanceConfig: preemptibleInstanceConfig, // preemptible support
 			Shape:                     &instanceType.Shape,
 			ShapeConfig:               buildShapeConfigFromInstanceType(instanceType), // flexible + burstable support

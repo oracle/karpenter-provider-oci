@@ -638,7 +638,7 @@ func TestA2CapacityAndKubeReservedUseTotalVcpus(t *testing.T) {
 	setOverhead(it, totalVcpu, 40, class)
 
 	assert.Equal(t, int64(6), it.Capacity.Cpu().Value())
-	assert.True(t, resource.MustParse("93m").Equal(*it.Overhead.KubeReserved.Cpu()))
+	assert.True(t, resource.MustParse("92m").Equal(*it.Overhead.KubeReserved.Cpu()))
 }
 
 func TestListInstanceTypesForFlexShapeAndTruncate(t *testing.T) {
@@ -686,6 +686,7 @@ func TestCalculatePricesAndOfferings(t *testing.T) {
 		Ocpus:       lo.ToPtr(float32(4)),
 		MemoryInGBs: lo.ToPtr(float32(32)),
 		BillingType: ocicore.ShapeBillingTypePaid,
+		IsFlexible:  lo.ToPtr(true),
 	}
 	ads := []string{"tenancy:PHX-AD-1", "tenancy:PHX-AD-2"}
 	sa := &ShapeAndAd{Shape: shape, Ads: ads}
@@ -739,6 +740,7 @@ func TestDecorateInstanceType_DoesNotDeadlock(t *testing.T) {
 		Ocpus:       lo.ToPtr(float32(4)),
 		MemoryInGBs: lo.ToPtr(float32(32)),
 		BillingType: ocicore.ShapeBillingTypePaid,
+		IsFlexible:  lo.ToPtr(true),
 	}
 	shapeAndAd := &ShapeAndAd{Shape: shape, Ads: []string{"tenancy:PHX-AD-1"}}
 	nodeClass := &ociv1beta1.OCINodeClass{
@@ -1282,7 +1284,7 @@ func TestSetOfferings_PreemptibleSpotAdded(t *testing.T) {
 
 	// available = true, basePrice arbitrary, restrict allows all
 	err := p.setOfferings(context.Background(), it, &ociv1beta1.OCINodeClass{}, sa, true, 1.0,
-		[]v1.Taint{preemptibleTaintNoSchedule})
+		[]v1.Taint{preemptibleTaintNoSchedule}, platformConfigEvaluation{compatible: true})
 	assert.NoError(t, err)
 
 	// Expect both on-demand and spot offerings when preemptible and not burstable
@@ -1321,7 +1323,7 @@ func TestSetOfferings_ExcludesUnavailableOfferings(t *testing.T) {
 	}
 
 	err := p.setOfferings(context.Background(), it, &ociv1beta1.OCINodeClass{}, sa, true, 1.0,
-		[]v1.Taint{preemptibleTaintNoSchedule})
+		[]v1.Taint{preemptibleTaintNoSchedule}, platformConfigEvaluation{compatible: true})
 	assert.NoError(t, err)
 
 	for _, o := range it.Offerings {
@@ -1359,7 +1361,8 @@ func TestSetOfferings_ExcludesUnavailableOfferings_ScopedByFlexConfig(t *testing
 		Ocpu:               lo.ToPtr(float32(2)),
 		MemoryInGbs:        lo.ToPtr(float32(16)),
 	}
-	err := p.setOfferings(context.Background(), unavailableIt, &ociv1beta1.OCINodeClass{}, sa, true, 1.0, nil)
+	err := p.setOfferings(context.Background(), unavailableIt, &ociv1beta1.OCINodeClass{}, sa, true, 1.0, nil,
+		platformConfigEvaluation{compatible: true})
 	assert.NoError(t, err)
 	for _, o := range unavailableIt.Offerings {
 		if o.Zone() == testZonePHXAD1 {
@@ -1377,7 +1380,8 @@ func TestSetOfferings_ExcludesUnavailableOfferings_ScopedByFlexConfig(t *testing
 		Ocpu:               lo.ToPtr(float32(4)),
 		MemoryInGbs:        lo.ToPtr(float32(16)),
 	}
-	err = p.setOfferings(context.Background(), otherIt, &ociv1beta1.OCINodeClass{}, sa, true, 1.0, nil)
+	err = p.setOfferings(context.Background(), otherIt, &ociv1beta1.OCINodeClass{}, sa, true, 1.0, nil,
+		platformConfigEvaluation{compatible: true})
 	assert.NoError(t, err)
 	for _, o := range otherIt.Offerings {
 		assert.True(t, o.Available,
@@ -1423,7 +1427,8 @@ func TestSetOfferings_ExcludesUnavailableOfferings_ScopedByCompartment(t *testin
 	inCompartmentIt := newIt()
 	nodeClassInCompartment := &ociv1beta1.OCINodeClass{}
 	nodeClassInCompartment.Spec.NodeCompartmentId = lo.ToPtr(quotaCompartment)
-	err := p.setOfferings(context.Background(), inCompartmentIt, nodeClassInCompartment, sa, true, 1.0, nil)
+	err := p.setOfferings(context.Background(), inCompartmentIt, nodeClassInCompartment, sa, true, 1.0, nil,
+		platformConfigEvaluation{compatible: true})
 	assert.NoError(t, err)
 	for _, o := range inCompartmentIt.Offerings {
 		capType := o.Requirements.Get("karpenter.sh/capacity-type").Any()
@@ -1440,7 +1445,8 @@ func TestSetOfferings_ExcludesUnavailableOfferings_ScopedByCompartment(t *testin
 	otherCompartmentIt := newIt()
 	nodeClassOther := &ociv1beta1.OCINodeClass{}
 	nodeClassOther.Spec.NodeCompartmentId = lo.ToPtr(otherCompartment)
-	err = p.setOfferings(context.Background(), otherCompartmentIt, nodeClassOther, sa, true, 1.0, nil)
+	err = p.setOfferings(context.Background(), otherCompartmentIt, nodeClassOther, sa, true, 1.0, nil,
+		platformConfigEvaluation{compatible: true})
 	assert.NoError(t, err)
 	for _, o := range otherCompartmentIt.Offerings {
 		assert.True(t, o.Available,
@@ -1536,7 +1542,8 @@ func TestSetOfferings_Prices(t *testing.T) {
 				Ads:   []string{ad},
 			}
 
-			err := p.setOfferings(context.Background(), it, tt.nodeClass, shapeAndAd, true, basePrice, tt.taints)
+			err := p.setOfferings(context.Background(), it, tt.nodeClass, shapeAndAd, true, basePrice, tt.taints,
+				platformConfigEvaluation{compatible: true})
 			require.NoError(t, err)
 			require.Len(t, it.Offerings, len(tt.wantPrices))
 
@@ -1567,7 +1574,7 @@ func TestSetOfferings_NoPreemptibleSpotIfTaintMissing(t *testing.T) {
 
 	// available = true, basePrice arbitrary, restrict allows all
 	err := p.setOfferings(context.Background(), it, &ociv1beta1.OCINodeClass{}, sa, true, 1.0,
-		make([]v1.Taint, 0))
+		make([]v1.Taint, 0), platformConfigEvaluation{compatible: true})
 	assert.NoError(t, err)
 
 	// Expect both on-demand and spot offerings when preemptible and not burstable
@@ -1677,6 +1684,7 @@ func TestFinalizeRequirements_OperatorMatrixAndLabels(t *testing.T) {
 			nil,   // MemoryInGbs
 			nil,   // BaselineOcpuUtilization
 			*tt.shape.Shape,
+			"", // PlatformType
 		}
 		p.finalizeRequirements(it, sa)
 		for key, op := range tt.expect {
@@ -2083,8 +2091,29 @@ func TestKubeReservedResources(t *testing.T) {
 			},
 		},
 		{
+			name: "6 CPU defaults truncate fractional reservation",
+			vcpu: 6,
+			mem:  8,
+			nc:   &ociv1beta1.OCINodeClass{},
+			want: map[string]string{"cpu": "92m", "memory": "1932735232"},
+		},
+		{
+			name: "7 CPU defaults retain integer reservation",
+			vcpu: 7,
+			mem:  8,
+			nc:   &ociv1beta1.OCINodeClass{},
+			want: map[string]string{"cpu": "95m", "memory": "1932735232"},
+		},
+		{
+			name: "fractional CPU defaults truncate fractional reservation",
+			vcpu: 4.5,
+			mem:  8,
+			nc:   &ociv1beta1.OCINodeClass{},
+			want: map[string]string{"cpu": "88m", "memory": "1932735232"},
+		},
+		{
 			name: "cpu override only",
-			vcpu: 4,
+			vcpu: 8,
 			mem:  8,
 			nc: &ociv1beta1.OCINodeClass{
 				Spec: ociv1beta1.OCINodeClassSpec{
@@ -2121,7 +2150,7 @@ func TestKubeReservedResources(t *testing.T) {
 		},
 		{
 			name: "both overrides",
-			vcpu: 4,
+			vcpu: 8,
 			mem:  8,
 			nc: &ociv1beta1.OCINodeClass{
 				Spec: ociv1beta1.OCINodeClassSpec{
@@ -2146,7 +2175,8 @@ func TestKubeReservedResources(t *testing.T) {
 			got := kubeReservedResources(tt.vcpu, tt.mem, tt.nc)
 			for key, wantStr := range tt.want {
 				want := resource.MustParse(wantStr)
-				assert.True(t, want.Equal(got[v1.ResourceName(key)]), "key: %s", key)
+				actual := got[v1.ResourceName(key)]
+				assert.True(t, want.Equal(actual), "key: %s, want %s, got %s", key, want.String(), actual.String())
 			}
 		})
 	}
@@ -3120,7 +3150,7 @@ func TestDecorateInstanceType_AppliesConfiguredOverhead(t *testing.T) {
 	shapeAndAd := &ShapeAndAd{
 		Shape: &ocicore.Shape{
 			Shape: lo.ToPtr("VM.Standard.E4.Flex"), Ocpus: lo.ToPtr(float32(4)),
-			MemoryInGBs: lo.ToPtr(float32(32)), BillingType: ocicore.ShapeBillingTypePaid,
+			MemoryInGBs: lo.ToPtr(float32(32)), BillingType: ocicore.ShapeBillingTypePaid, IsFlexible: lo.ToPtr(true),
 		},
 		Ads: []string{"tenancy:PHX-AD-1"},
 	}
@@ -3149,11 +3179,13 @@ func TestDecorateInstanceType_AppliesConfiguredOverhead(t *testing.T) {
 
 	configured := newInstanceType()
 	_ = newProvider(defaultVMMemoryOverhead).decorateInstanceType(
-		context.Background(), configured, nodeClass, shapeAndAd, nil, capacitydiscovery.NoAdvice())
+		context.Background(), configured, nodeClass, shapeAndAd, nil,
+		capacitydiscovery.NoAdvice())
 
 	disabled := newInstanceType()
 	_ = newProvider(VMMemoryOverheadConfig{}).decorateInstanceType(
-		context.Background(), disabled, nodeClass, shapeAndAd, nil, capacitydiscovery.NoAdvice())
+		context.Background(), disabled, nodeClass, shapeAndAd, nil,
+		capacitydiscovery.NoAdvice())
 
 	assert.Equal(t, declared, disabled.Capacity.Memory().Value(),
 		"a zero overhead must leave declared memory untouched")

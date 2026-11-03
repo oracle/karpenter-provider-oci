@@ -32,6 +32,7 @@ type OciInstanceType struct {
 	MemoryInGbs             *float32
 	BaselineOcpuUtilization *ociv1beta1.BaselineOcpuUtilization
 	Shape                   string
+	PlatformType            ocicore.ShapePlatformConfigOptionsTypeEnum
 }
 
 func (it *OciInstanceType) CopyAndUpdateOfferings(newOfferings cloudprovider.Offerings) *OciInstanceType {
@@ -48,6 +49,7 @@ func (it *OciInstanceType) CopyAndUpdateOfferings(newOfferings cloudprovider.Off
 		MemoryInGbs:             it.MemoryInGbs,
 		BaselineOcpuUtilization: it.BaselineOcpuUtilization,
 		Shape:                   it.Shape,
+		PlatformType:            it.PlatformType,
 	}
 }
 

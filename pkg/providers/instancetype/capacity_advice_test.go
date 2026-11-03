@@ -83,7 +83,7 @@ func TestDecorateInstanceType_AppliesDiscoveredCapacity(t *testing.T) {
 	shapeAndAd := &ShapeAndAd{
 		Shape: &ocicore.Shape{
 			Shape: lo.ToPtr("VM.Standard.E4.Flex"), Ocpus: lo.ToPtr(float32(4)),
-			MemoryInGBs: lo.ToPtr(float32(32)), BillingType: ocicore.ShapeBillingTypePaid,
+			MemoryInGBs: lo.ToPtr(float32(32)), BillingType: ocicore.ShapeBillingTypePaid, IsFlexible: lo.ToPtr(true),
 		},
 		Ads: []string{"tenancy:PHX-AD-1"},
 	}
@@ -111,7 +111,8 @@ func TestDecorateInstanceType_AppliesDiscoveredCapacity(t *testing.T) {
 
 	discovered := newProvider(advisor)
 	it = newInstanceType()
-	_ = discovered.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil, advisor)
+	_ = discovered.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil,
+		advisor)
 
 	assert.Equal(t, measured.Value(), it.Capacity.Memory().Value(),
 		"decorateInstanceType must prefer the measured capacity over the modelled one")
@@ -141,7 +142,7 @@ func TestDiscoveredCapacityAndStaticOverhead(t *testing.T) {
 	shapeAndAd := &ShapeAndAd{
 		Shape: &ocicore.Shape{
 			Shape: lo.ToPtr("VM.Standard.E5.Flex"), Ocpus: lo.ToPtr(float32(8)),
-			MemoryInGBs: lo.ToPtr(float32(declaredGiB)), BillingType: ocicore.ShapeBillingTypePaid,
+			MemoryInGBs: lo.ToPtr(float32(declaredGiB)), BillingType: ocicore.ShapeBillingTypePaid, IsFlexible: lo.ToPtr(true),
 		},
 		Ads: []string{"tenancy:PHX-AD-1"},
 	}
@@ -173,7 +174,8 @@ func TestDiscoveredCapacityAndStaticOverhead(t *testing.T) {
 		p := newProvider(advisor)
 		it := newInstanceType()
 
-		_ = p.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil, advisor)
+		_ = p.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil,
+			advisor)
 
 		assert.Equal(t, int64(estimateMiB), memoryMiB(it),
 			"with nothing measured, capacity is declared memory minus the configured overhead")
@@ -186,7 +188,8 @@ func TestDiscoveredCapacityAndStaticOverhead(t *testing.T) {
 			resource.MustParse(fmt.Sprintf("%dMi", measuredMiB)))
 
 		it := newInstanceType()
-		_ = p.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil, advisor)
+		_ = p.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil,
+			advisor)
 
 		assert.Equal(t, int64(measuredMiB), memoryMiB(it),
 			"measurement wins over the estimate")
@@ -206,7 +209,8 @@ func TestDiscoveredCapacityAndStaticOverhead(t *testing.T) {
 			resource.MustParse(fmt.Sprintf("%dMi", smallerThanEstimate)))
 
 		it := newInstanceType()
-		_ = p.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil, advisor)
+		_ = p.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil,
+			advisor)
 
 		assert.Equal(t, int64(smallerThanEstimate), memoryMiB(it))
 	})
@@ -218,7 +222,8 @@ func TestDiscoveredCapacityAndStaticOverhead(t *testing.T) {
 
 		it := newInstanceType()
 		// Disabled means no image is resolved, so decoration receives no image id.
-		_ = p.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil, capacitydiscovery.NoAdvice())
+		_ = p.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil,
+			capacitydiscovery.NoAdvice())
 
 		assert.Equal(t, int64(estimateMiB), memoryMiB(it),
 			"turning discovery off must fall back to #73's estimate, not to declared memory")
@@ -264,7 +269,8 @@ func TestDiscoveredCapacityAndStaticOverhead(t *testing.T) {
 		p.capacityAdvisor = nil
 
 		it := newInstanceType()
-		_ = p.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil, capacitydiscovery.NoAdvice())
+		_ = p.decorateInstanceType(context.Background(), it, nodeClass, shapeAndAd, nil,
+			capacitydiscovery.NoAdvice())
 
 		assert.Equal(t, int64(declaredMiB), memoryMiB(it),
 			"only with both switched off is declared memory reported unchanged")

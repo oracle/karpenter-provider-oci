@@ -619,6 +619,12 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 		It("should launch the lowest-priced shape after applying node overlays", func() {
 			instanceA = testInstanceType("VM.Standard2.4", 0.2552)
 			instanceB = testInstanceType("VM.Standard2.24", 1.5312)
+			instanceA.PlatformType = ocicore.ShapePlatformConfigOptionsTypeAmdVm
+			instanceB.PlatformType = ocicore.ShapePlatformConfigOptionsTypeIntelVm
+			candidatesByShape := map[string]*instancetype.OciInstanceType{
+				instanceA.Shape: instanceA,
+				instanceB.Shape: instanceB,
+			}
 			overlayCtx := coreoptions.ToContext(ctx, coretest.Options(coretest.OptionsFields{
 				FeatureGates: coretest.FeatureGates{NodeOverlay: lo.ToPtr(true)},
 			}))
@@ -632,6 +638,10 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 					LaunchInstanceFn: func(_ context.Context, nc *v1.NodeClaim, _ *v1beta1.OCINodeClass,
 						it *instancetype.OciInstanceType, _ *image.ImageResolveResult, _ *network.NetworkResolveResult,
 						_ *kms.KmsKeyResolveResult, _ *placement.Proposal) (*instance.InstanceInfo, error) {
+						expected := candidatesByShape[it.Shape]
+						Expect(it.PlatformType).To(Equal(expected.PlatformType))
+						Expect(it.Capacity).To(Equal(expected.Capacity))
+						Expect(it.Overhead).To(Equal(expected.Overhead))
 						launchedShapes = append(launchedShapes, it.Shape)
 						return &instance.InstanceInfo{Instance: testInstanceWithShape(it.Shape, nc.Labels[v1.NodePoolLabelKey])}, nil
 					},

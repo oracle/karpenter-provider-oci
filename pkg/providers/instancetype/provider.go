@@ -300,6 +300,15 @@ func (p *DefaultProvider) decorateInstanceType(ctx context.Context, it *OciInsta
 	*/
 
 	shape := shapeAndAd.Shape
+	evaluation := evaluatePlatformConfig(shape, nodeClass.Spec.PlatformConfig)
+	if !evaluation.compatible {
+		log.FromContext(ctx).V(1).Info("shape unavailable for requested platform configuration",
+			"nodeclass", nodeClass.Name, "shape", *shape.Shape,
+			"platformType", string(lo.FromPtr(shape.PlatformConfigOptions).Type),
+			"reason", evaluation.reason, "field", evaluation.field)
+	}
+
+	it.PlatformType = lo.FromPtr(shape.PlatformConfigOptions).Type
 	// Attributes (ocpu, memory, baseline) have already been validated and set by listInstanceTypesForFlexShape for flex shapes
 
 	var ocpu, memoryInGbs float32
@@ -324,8 +333,11 @@ func (p *DefaultProvider) decorateInstanceType(ctx context.Context, it *OciInsta
 		cpuBaseline = ociv1beta1.BASELINE_1_1
 	}
 
-	// Set capacity & overhead using the same total vCPU count that the launched instance exposes.
+	// Use one CPU estimate for capacity, pod limits, and overhead.
 	totalVcpu := p.vcpu(shape, ocpu)
+	if request := nodeClass.Spec.PlatformConfig; evaluation.compatible && !request.IsEmpty() {
+		totalVcpu = adjustVCPUForPlatformConfig(totalVcpu, shape, request)
+	}
 	setCapacity(it, shape, totalVcpu, memoryInGbs, nodeClass, p.ipFamilies, p.vmMemoryOverhead)
 	setOverhead(it, totalVcpu, memoryInGbs, nodeClass)
 
@@ -359,7 +371,7 @@ func (p *DefaultProvider) decorateInstanceType(ctx context.Context, it *OciInsta
 
 	err := p.setOfferings(ctx, it, nodeClass, shapeAndAd,
 		shapeAvailable && priceAvailable && vnicAvailable,
-		basePrice, taints)
+		basePrice, taints, evaluation)
 
 	if err != nil {
 		log.FromContext(ctx).Error(err, "failed to create offering")
@@ -680,8 +692,9 @@ func kubeReservedResources(totalVcpu float32, gbs float32, class *ociv1beta1.OCI
 	}
 
 	res := v1.ResourceList{
-		// round-up cpu; memoryRes is in GiB and resource.NewQuantity takes bytes, so scale by 1024^3
-		v1.ResourceCPU:    *resource.NewMilliQuantity(int64(math.Ceil(float64(cpuRes))), resource.DecimalSI),
+		// Truncate fractional CPU millicores to match bootstrap's integer formatting.
+		v1.ResourceCPU: *resource.NewMilliQuantity(int64(cpuRes), resource.DecimalSI),
+		// memoryRes is in GiB and resource.NewQuantity takes bytes, so scale by 1024^3 and round up.
 		v1.ResourceMemory: *resource.NewQuantity(int64(math.Ceil(float64(memoryRes)*1024*1024*1024)), resource.BinarySI),
 	}
 
@@ -839,7 +852,8 @@ func (p *DefaultProvider) instanceCompartment(nodeClass *ociv1beta1.OCINodeClass
 }
 
 func (p *DefaultProvider) setOfferings(ctx context.Context, it *OciInstanceType, nodeClass *ociv1beta1.OCINodeClass,
-	shapeAndAd *ShapeAndAd, available bool, basePrice float64, taints []v1.Taint) error {
+	shapeAndAd *ShapeAndAd, available bool, basePrice float64, taints []v1.Taint,
+	evaluation platformConfigEvaluation) error {
 	placementRestrictFunc, err := p.getPlacementRestrictFunc(ctx, nodeClass)
 	if err != nil {
 		return err
@@ -900,6 +914,18 @@ func (p *DefaultProvider) setOfferings(ctx context.Context, it *OciInstanceType,
 						it.Ocpu, it.MemoryInGbs, offering.Zone(), capType, compartment)) {
 				offering.Available = false
 			}
+		}
+	}
+
+	platformOptions := lo.FromPtr(shapeAndAd.Shape.PlatformConfigOptions)
+	encrypted := false
+	if request := nodeClass.Spec.PlatformConfig; !request.IsEmpty() {
+		encrypted = lo.FromPtr(resolvePlatformBoolean(request.MemoryEncryptionEnabled,
+			lo.FromPtr(platformOptions.MemoryEncryptionOptions).IsDefaultEnabled))
+	}
+	for _, offering := range it.Offerings {
+		if !evaluation.compatible || (encrypted && offering.CapacityType() != corev1.CapacityTypeOnDemand) {
+			offering.Available = false
 		}
 	}
 
@@ -1006,7 +1032,6 @@ func (p *DefaultProvider) ListInstanceTypes(ctx context.Context,
 
 func (p *DefaultProvider) makeInstanceTypes(ctx context.Context,
 	sa *ShapeAndAd, nodeClass *ociv1beta1.OCINodeClass, taints []v1.Taint) ([]*OciInstanceType, error) {
-
 	var candidateTypes []*OciInstanceType
 	if sa.Shape.IsFlexible != nil && *sa.Shape.IsFlexible {
 		candidateTypes = p.listInstanceTypesForFlexShape(ctx, sa.Shape, nodeClass)
