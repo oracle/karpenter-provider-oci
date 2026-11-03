@@ -2,8 +2,27 @@ apiVersion: v1
 entries:
   karpenter:
   - apiVersion: v2
+    appVersion: v1.5.0
+    created: "2026-11-03T22:13:55.508197073Z"
+    description: A Helm chart for Karpenter provider OCI
+    digest: 8650596b4137ac16ac0c798cc1624b63c675f6e333c5ccc5bddd3884211cceb8
+    home: https://github.com/oracle/karpenter-provider-oci/
+    keywords:
+    - cluster
+    - node
+    - scheduler
+    - autoscaling
+    - lifecycle
+    name: karpenter
+    sources:
+    - https://github.com/oracle/karpenter-provider-oci/
+    type: application
+    urls:
+    - https://oracle.github.io/karpenter-provider-oci/charts/karpenter-1.5.0.tgz
+    version: 1.5.0
+  - apiVersion: v2
     appVersion: v1.4.0
-    created: "2026-09-18T08:40:06.653457064Z"
+    created: "2026-11-03T22:13:55.507294086Z"
     description: A Helm chart for Karpenter provider OCI
     digest: 38115037a182e5220a78f3367c2041b68a2d5e8446605cc28d2b8085f7a8d4df
     home: https://github.com/oracle/karpenter-provider-oci/
@@ -22,7 +41,7 @@ entries:
     version: 1.4.0
   - apiVersion: v2
     appVersion: v1.3.0
-    created: "2026-09-18T08:40:06.652082625Z"
+    created: "2026-11-03T22:13:55.505693758Z"
     description: A Helm chart for Karpenter provider OCI
     digest: b332b2877a60f4e846618a36581612c6e1ba415c685b24ebbfe9cc5708544894
     home: https://github.com/oracle/karpenter-provider-oci/
@@ -41,7 +60,7 @@ entries:
     version: 1.3.0
   - apiVersion: v2
     appVersion: v1.2.0
-    created: "2026-09-18T08:40:06.649916665Z"
+    created: "2026-11-03T22:13:55.504808197Z"
     description: A Helm chart for Karpenter provider OCI
     digest: 7c2e38221d6b072fc302df1ec6dc1dd4c935cc2b69a849bdda05d22d2373b867
     home: https://github.com/oracle/karpenter-provider-oci/
@@ -60,7 +79,7 @@ entries:
     version: 1.2.0
   - apiVersion: v2
     appVersion: v1.1.0
-    created: "2026-09-18T08:40:06.64867286Z"
+    created: "2026-11-03T22:13:55.503969167Z"
     description: A Helm chart for Karpenter provider OCI
     digest: e5fc9ac97c2ac020dead18b3659fa0c9ec29361438688b822e7a2e38b160182d
     home: https://github.com/oracle/karpenter-provider-oci/
@@ -79,7 +98,7 @@ entries:
     version: 1.1.0
   - apiVersion: v2
     appVersion: v1.0.0
-    created: "2026-09-18T08:40:06.64747932Z"
+    created: "2026-11-03T22:13:55.503102594Z"
     description: A Helm chart for Karpenter provider OCI
     digest: 5a7503df39724aa722159bb519f2f0a5011ce631904a7d670cdb1ec7b6e79633
     home: https://github.com/oracle/karpenter-provider-oci/
@@ -96,4 +115,4 @@ entries:
     urls:
     - https://oracle.github.io/karpenter-provider-oci/charts/karpenter-1.0.0.tgz
     version: 1.0.0
-generated: "2026-09-18T08:40:06.646166557Z"
+generated: "2026-11-03T22:13:55.502083021Z"
