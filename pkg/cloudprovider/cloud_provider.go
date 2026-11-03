@@ -702,7 +702,7 @@ func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *corev1.NodeCla
 
 	scheduleRequirements := scheduling.NewNodeSelectorRequirementsWithMinValues(nodeClaim.Spec.Requirements...)
 	if scheduleRequirements.Has(ociv1beta1.ReservationIDLabel) {
-		capResLabelValue := scheduleRequirements.Get(ociv1beta1.ReservationIDLabel).Any()
+		capResLabelValues := scheduleRequirements.Get(ociv1beta1.ReservationIDLabel).Values()
 
 		// this can happen when nodeClaim is created with reserved capacity but then capacity reservation
 		// config is removed later
@@ -716,15 +716,15 @@ func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *corev1.NodeCla
 			return "", capResErr
 		}
 
-		capRes, found := lo.Find(capReservations, func(item capacityreservation.ResolveResult) bool {
-			return capacityreservation.OcidToLabelValue(item.Ocid) == capResLabelValue
-		})
-
-		if !found {
-			return CapacityReservationMismatch, nil
+		for _, capRes := range capReservations {
+			if lo.Contains(capResLabelValues, capacityreservation.OcidToLabelValue(capRes.Ocid)) {
+				desiredInstanceState.CapacityReservationIds = append(desiredInstanceState.CapacityReservationIds, capRes.Ocid)
+			}
 		}
 
-		desiredInstanceState.CapacityReservationId = &capRes.Ocid
+		if len(desiredInstanceState.CapacityReservationIds) == 0 {
+			return CapacityReservationMismatch, nil
+		}
 	}
 
 	// ------ 0. NodeClass static field hash not matching NodeClaim hash or hash version are not matching --------
