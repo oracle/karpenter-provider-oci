@@ -1,5 +1,32 @@
 # Advanced Use Cases
 
+### Influence ReplicaSet scale-down with pod deletion cost
+
+KPO supports upstream pod deletion-cost management when `settings.featureGates.podDeletionCostManagement=true`. Karpenter manages `controller.kubernetes.io/pod-deletion-cost` annotations on ReplicaSet pods to align workload scale-down with node disruption preferences. For the upstream behavior and rollback guidance, see the [Karpenter pod deletion-cost documentation](https://karpenter.sh/v1.15/concepts/pod-deletion-cost/).
+
+Enable the feature gate through Helm values:
+
+```yaml
+settings:
+  featureGates:
+    podDeletionCostManagement: true
+```
+
+After enabling the gate, inspect deletion costs on an existing Deployment's pods running on Karpenter-managed nodes:
+
+```bash
+kubectl -n <workload-namespace> get pods -l app=<app-label> \
+  -o custom-columns='NAME:.metadata.name,NODE:.spec.nodeName,DELETION-COST:.metadata.annotations.controller\.kubernetes\.io/pod-deletion-cost'
+```
+
+When scaling the Deployment down, the ReplicaSet controller prefers removing lower-cost pods, which can help free a node for consolidation. Deletion cost is one selection preference; it does not guarantee which pods or nodes are removed.
+
+Notes for pod deletion-cost management usage:
+
+- The feature is Alpha and disabled by default.
+- Eligible pods receive negative integer costs; lower values are preferred for deletion. Updates are asynchronous, and disruption budgets or protections can leave some pods without an annotation.
+- Karpenter manages this annotation. Use `karpenter.sh/disruption-cost` for your own workload disruption preferences.
+
 ### Oracle Cloud Agent Plugins
 
 For Oracle Cloud Agent plugin use cases, prerequisites, and configuration examples, see [Oracle Cloud Agent plugins](agent-plugins.md).

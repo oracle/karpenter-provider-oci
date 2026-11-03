@@ -178,7 +178,8 @@ Example in a JSON format:
 	fs.Var((*RepairPoliciesValue)(&o.RepairPolicies),
 		"repair-policies",
 		"A JSON array of karpenter provider repair policies. Example in a JSON format"+
-			"[{\"ConditionType\": \"Ready\",\"ConditionStatus\": \"False\",\"TolerationDuration\": \"600000000000\"}]")
+			"[{\"ConditionType\": \"Ready\",\"ConditionStatus\": \"False\","+
+			"\"TolerationDuration\": 600000000000}]")
 
 	fs.StringVar(&o.PreBakedImageCompartmentId, "pre-baked-image-compartment-id",
 		"", "the compartment ocid under which OKE pre-baked images are published")
@@ -295,7 +296,29 @@ func (o *Options) Validate() error {
 	if !isFiniteInRange(o.VMMemoryOverheadPercent, 0, 1) || o.VMMemoryOverheadPercent == 1 {
 		return errors.New("vm-memory-overhead-percent must be a finite number in [0, 1)")
 	}
+	for i, policy := range o.RepairPolicies {
+		if policy.Action == cloudprovider.RebootNode {
+			return fmt.Errorf("repair-policies[%d]: RebootNode is not supported by Karpenter Provider OCI", i)
+		}
+	}
 
+	return nil
+}
+
+// ValidateWithCoreOptions checks the effective configuration after both upstream
+// and provider options have been parsed, before provider initialization.
+func (o *Options) ValidateWithCoreOptions(core *coreoptions.Options) error {
+	if err := o.Validate(); err != nil {
+		return err
+	}
+	if !core.LegacyNodeRepair {
+		return errors.New("Karpenter Provider OCI requires legacy-node-repair=true (LEGACY_NODE_REPAIR=true); " +
+			"the non-legacy node repair configuration is not supported")
+	}
+	if core.FeatureGates.TerminateFirstDrift || core.FeatureGates.TerminateFirstRepair {
+		return errors.New("terminate-first disruption is not supported by Karpenter Provider OCI; " +
+			"use legacy-node-repair=true with TerminateFirstDrift=false and TerminateFirstRepair=false")
+	}
 	return nil
 }
 

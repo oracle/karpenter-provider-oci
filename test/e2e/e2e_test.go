@@ -476,6 +476,7 @@ func (s *E2ETestSuite) TestScaleUp() {
 		s.verifyOciNodeClassStatusNetwork(nodeClass, testConfig.NsgName, testConfig.Nsgs[0],
 			testConfig.SubnetName, testConfig.SubnetID)
 		s.verifyOciNodeClassStatusVolume(nodeClass, testConfig.KmsKey, testConfig.KmsKeyName)
+
 		t.Log("Scaleup test successful")
 	})
 }
@@ -1531,6 +1532,26 @@ func (s *E2ETestSuite) TestCostBasedConsolidation() {
 func (s *E2ETestSuite) TestScaleDown() {
 	// Fetch the deployment
 	s.t.Log("Start Scaledown testing")
+	s.t.Run("PodDeletionCostManagement", func(t *testing.T) {
+		// Ranking is asynchronous and budgets can leave some nodes unranked.
+		require.Eventually(t, func() bool {
+			pods := &corev1.PodList{}
+			if err := s.ctrlClient.List(s.ctx, pods, client.InNamespace(s.testConfig.Namespace),
+				client.MatchingLabels{"app": s.testConfig.TestDeployment.Name}); err != nil {
+				t.Logf("Waiting for test pods: %v", err)
+				return false
+			}
+			for _, pod := range pods.Items {
+				// Parse decimal (base 10), limited to the signed 32-bit pod deletion-cost range.
+				cost, err := strconv.ParseInt(pod.Annotations[corev1.PodDeletionCost], 10, 32)
+				if err == nil && cost < 0 && pod.Status.Phase == corev1.PodRunning && pod.DeletionTimestamp.IsZero() {
+					return true
+				}
+			}
+			return false
+		}, ResourceCreationTimeout, PollInterval,
+			"expected a negative deletion cost on a running test Deployment pod before scale-down")
+	})
 	s.ensureDeploymentReplicas(s.testConfig.TestDeployment.Name, s.testConfig.Namespace, 0)
 
 	// Wait for nodes to be scaled down

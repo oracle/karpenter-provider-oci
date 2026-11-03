@@ -70,9 +70,10 @@ var (
 			Name:      "nodeclass_ready",
 			Help:      "Whether an OCINodeClass is ready and has resolved the required OCI dependencies for provisioning.",
 		},
-		[]string{
-			NodeClassLabel,
+		[]opmetrics.Label{
+			{Name: NodeClassLabel},
 		},
+		opmetrics.Alpha,
 	)
 
 	InstanceTypeOfferingAvailable = opmetrics.NewPrometheusGauge(
@@ -83,11 +84,12 @@ var (
 			Name:      "instance_type_offering_available",
 			Help:      "Instance type offering availability, based on instance type, capacity type, and zone",
 		},
-		[]string{
-			InstanceTypeLabel,
-			CapacityTypeLabel,
-			ZoneLabel,
+		[]opmetrics.Label{
+			{Name: InstanceTypeLabel},
+			{Name: CapacityTypeLabel},
+			{Name: ZoneLabel},
 		},
+		opmetrics.Alpha,
 	)
 
 	InstanceTypeOfferingPriceEstimate = opmetrics.NewPrometheusGauge(
@@ -99,11 +101,12 @@ var (
 			Help: "Instance type offering estimated hourly price used when making informed decisions on node " +
 				"cost calculation, based on instance type, capacity type, and zone.",
 		},
-		[]string{
-			InstanceTypeLabel,
-			CapacityTypeLabel,
-			ZoneLabel,
+		[]opmetrics.Label{
+			{Name: InstanceTypeLabel},
+			{Name: CapacityTypeLabel},
+			{Name: ZoneLabel},
 		},
+		opmetrics.Alpha,
 	)
 
 	// CapacityAdviceCounter separates the expected reasons for having no measured capacity to
@@ -119,9 +122,10 @@ var (
 			Help: "Number of times capacity discovery was consulted while modelling an instance " +
 				"type, by outcome",
 		},
-		[]string{
-			OutcomeLabel,
+		[]opmetrics.Label{
+			{Name: OutcomeLabel},
 		},
+		opmetrics.Alpha,
 	)
 
 	ExternalApiCallDuration = opmetrics.NewPrometheusHistogram(
@@ -133,9 +137,10 @@ var (
 			Help:      "Duration of the external API call",
 			Buckets:   metrics.DurationBuckets(),
 		},
-		[]string{
-			ApiNameLabel,
+		[]opmetrics.Label{
+			{Name: ApiNameLabel},
 		},
+		opmetrics.Alpha,
 	)
 
 	ExternalApiCallStatusCounter = opmetrics.NewPrometheusCounter(
@@ -146,10 +151,11 @@ var (
 			Name:      "external_api_call_status_count",
 			Help:      "Number of external API call status",
 		},
-		[]string{
-			ApiNameLabel,
-			ApiStatusCodeLabel,
+		[]opmetrics.Label{
+			{Name: ApiNameLabel},
+			{Name: ApiStatusCodeLabel},
 		},
+		opmetrics.Alpha,
 	)
 
 	InstanceLaunchesCounter = opmetrics.NewPrometheusCounter(
@@ -160,12 +166,13 @@ var (
 			Name:      "instance_launches_total",
 			Help:      "Number of OCI instance launch attempts initiated by Karpenter Provider OCI.",
 		},
-		[]string{
-			CapacityTypeLabel,
-			ShapeLabel,
-			AvailabilityDomainLabel,
-			ResultLabel,
+		[]opmetrics.Label{
+			{Name: CapacityTypeLabel},
+			{Name: ShapeLabel},
+			{Name: AvailabilityDomainLabel},
+			{Name: ResultLabel},
 		},
+		opmetrics.Alpha,
 	)
 
 	CapacityErrorsCounter = opmetrics.NewPrometheusCounter(
@@ -176,12 +183,13 @@ var (
 			Name:      "capacity_errors_total",
 			Help:      "Number of OCI capacity-related provisioning failures.",
 		},
-		[]string{
-			CapacityTypeLabel,
-			ShapeLabel,
-			AvailabilityDomainLabel,
-			FaultDomainLabel,
+		[]opmetrics.Label{
+			{Name: CapacityTypeLabel},
+			{Name: ShapeLabel},
+			{Name: AvailabilityDomainLabel},
+			{Name: FaultDomainLabel},
 		},
+		opmetrics.Alpha,
 	)
 
 	WorkRequestsCounter = opmetrics.NewPrometheusCounter(
@@ -192,10 +200,11 @@ var (
 			Name:      "work_requests_total",
 			Help:      "Number of OCI work request outcomes.",
 		},
-		[]string{
-			OperationLabel,
-			StatusLabel,
+		[]opmetrics.Label{
+			{Name: OperationLabel},
+			{Name: StatusLabel},
 		},
+		opmetrics.Alpha,
 	)
 
 	WorkRequestProcessDuration = opmetrics.NewPrometheusHistogram(
@@ -207,10 +216,11 @@ var (
 			Help:      "Duration of workrequest process time in seconds",
 			Buckets:   metrics.DurationBuckets(),
 		},
-		[]string{
-			OperationLabel,
-			StatusLabel,
+		[]opmetrics.Label{
+			{Name: OperationLabel},
+			{Name: StatusLabel},
 		},
+		opmetrics.Alpha,
 	)
 
 	VcnIPNativeEnabled = opmetrics.NewPrometheusGauge(
@@ -221,7 +231,8 @@ var (
 			Name:      "vcn_ip_native_enabled",
 			Help:      "Whether Karpenter Provider OCI is configured for an OCI VCN IP native cluster.",
 		},
-		[]string{},
+		[]opmetrics.Label{},
+		opmetrics.Alpha,
 	)
 
 	LeaderNodeInfo = opmetrics.NewPrometheusGauge(
@@ -233,9 +244,10 @@ var (
 			Help: "Information about the Kubernetes node hosting the elected Karpenter Provider OCI controller. " +
 				"The value is always 1.",
 		},
-		[]string{
-			NodeNameLabel,
+		[]opmetrics.Label{
+			{Name: NodeNameLabel},
 		},
+		opmetrics.Alpha,
 	)
 )
 

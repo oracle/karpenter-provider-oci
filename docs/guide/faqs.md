@@ -238,6 +238,14 @@ Notes:
 - The `labelSelector` must match the pod labels, or the scheduler will not calculate skew against the intended pod set.
 - Supported scheduling labels are documented in [Scheduling Labels](scheduling-labels.md).
 
+#### Mirror cluster scheduler defaults
+
+`settings.schedulerConfig` lets Karpenter account for the cluster scheduler's default topology-spread constraints when planning capacity. See the upstream [`SCHEDULER_CONFIG` reference](https://karpenter.sh/v1.15/reference/settings/) for the configuration format and supported fields.
+
+The default is `{}`, which applies no scheduler configuration overrides. Karpenter does not discover the cluster scheduler's defaults automatically. Configure `podTopologySpread.defaultConstraints` to match the effective defaults of the scheduler handling your workloads. Pods with explicit `topologySpreadConstraints` use those constraints instead.
+
+This setting configures Karpenter's scheduling simulation; it does not change OKE's scheduler configuration. The chart's top-level `topologySpreadConstraints` setting separately controls placement of the KPO controller pods.
+
 ### How can Karpenter fall back when an OCI service limit or compartment quota is exceeded?
 
 By default, an OCI `LimitExceeded` or `QuotaExceeded` launch failure is returned immediately. To have Karpenter temporarily treat the failed offering as unavailable and try another compatible offering or NodePool, enable the Helm setting:

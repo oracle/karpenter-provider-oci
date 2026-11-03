@@ -15,12 +15,62 @@ import (
 
 	"github.com/oracle/karpenter-provider-oci/pkg/fakes"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
 type nilHTTPResponse struct{}
 
 func (nilHTTPResponse) HTTPResponse() *http.Response {
 	return nil
+}
+
+func TestMetricSamplesRetainNamesAndLabels(t *testing.T) {
+	RecordNodeClassReady("compatibility-nodeclass", true)
+	t.Cleanup(func() { DeleteNodeClassReady("compatibility-nodeclass") })
+	CountResponseStatus("compatibility-api", &fakes.TestResponse{StatusCode: 201})
+	t.Cleanup(func() {
+		ExternalApiCallStatusCounter.Delete(map[string]string{"api_name": "compatibility-api", "status_code": "201"})
+	})
+	RecordWorkRequestProcessTime(2.5, "compatibility-operation", "SUCCEEDED")
+	t.Cleanup(func() {
+		WorkRequestProcessDuration.Delete(map[string]string{"operation": "compatibility-operation", "status": "SUCCEEDED"})
+	})
+
+	families, err := crmetrics.Registry.Gather()
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name   string
+		labels map[string]string
+	}{
+		{"karpenter_cloudprovider_nodeclass_ready", map[string]string{"nodeclass": "compatibility-nodeclass"}},
+		{
+			"karpenter_cloudprovider_external_api_call_status_count",
+			map[string]string{"api_name": "compatibility-api", "status_code": "201"},
+		},
+		{
+			"karpenter_cloudprovider_work_request_process_time_seconds",
+			map[string]string{"operation": "compatibility-operation", "status": "SUCCEEDED"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, family := range families {
+				if family.GetName() != tc.name {
+					continue
+				}
+				for _, sample := range family.Metric {
+					labels := map[string]string{}
+					for _, label := range sample.Label {
+						labels[label.GetName()] = label.GetValue()
+					}
+					if assert.ObjectsAreEqual(tc.labels, labels) {
+						return
+					}
+				}
+			}
+			t.Fatalf("metric sample with exact labels %v was not found", tc.labels)
+		})
+	}
 }
 
 func TestMeasureCallDuration(t *testing.T) {
