@@ -100,6 +100,8 @@ func main() {
 			op.ClusterPlacementGroupProvider,
 			cloudProvider,
 			op.CapacityDiscoveryProvider,
+			op.InstanceProvider,
+			op.NpnProvider,
 		)...).
 		Start(ctx)
 }
