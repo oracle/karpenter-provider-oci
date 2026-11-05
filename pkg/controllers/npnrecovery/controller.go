@@ -55,22 +55,18 @@ const nodeClassNotReadyRequeue = 30 * time.Second
 type Controller struct {
 	clk              clock.Clock
 	kubeClient       client.Client
-	apiReader        client.Reader
 	cloudProvider    cloudprovider.CloudProvider
 	instanceProvider instance.Provider
 	networkProvider  network.Provider
 	npnProvider      npn.Provider
 }
 
-// NewController takes an apiReader for NPN lookups so the controller needs no list/watch permission on
-// NativePodNetworks and never acts on a stale cache.
-func NewController(clk clock.Clock, kubeClient client.Client, apiReader client.Reader,
+func NewController(clk clock.Clock, kubeClient client.Client,
 	cloudProvider cloudprovider.CloudProvider, instanceProvider instance.Provider,
 	networkProvider network.Provider, npnProvider npn.Provider) *Controller {
 	return &Controller{
 		clk:              clk,
 		kubeClient:       kubeClient,
-		apiReader:        apiReader,
 		cloudProvider:    cloudProvider,
 		instanceProvider: instanceProvider,
 		networkProvider:  networkProvider,
@@ -92,7 +88,7 @@ func (c *Controller) Reconcile(ctx context.Context, nodeClaim *corev1.NodeClaim)
 	}
 
 	npnName := npn.NameForInstance(nodeClaim.Status.ProviderID)
-	err := c.apiReader.Get(ctx, types.NamespacedName{Name: npnName}, &npnv1beta1.NativePodNetwork{})
+	err := c.kubeClient.Get(ctx, types.NamespacedName{Name: npnName}, &npnv1beta1.NativePodNetwork{})
 	if err == nil {
 		return reconcile.Result{}, nil
 	}

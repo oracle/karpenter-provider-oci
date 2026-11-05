@@ -66,7 +66,7 @@ var _ = Describe("OCINodeClass Reconciler", func() {
 
 		newNpnControllers := func(discoveryEnabled, npnCluster bool) []controller.Controller {
 			npnProvider := lo.Must(npn.NewProvider(ctx, npnCluster, []network.IpFamily{network.IPv4}))
-			return NewControllers(ctx, nil, nil, nil, nil, fake.NewClientset(),
+			return NewControllers(ctx, nil, nil, nil, fake.NewClientset(),
 				&fakes.FakeEventRecorder{}, imageProvider, kmsProvider, networkProvider, crProvider,
 				computeClusterProvider, identityProvider, cpgProvider, &fakes.FakeCloudProvider{},
 				&fakeCapacityProvider{enabled: discoveryEnabled}, nil, npnProvider,

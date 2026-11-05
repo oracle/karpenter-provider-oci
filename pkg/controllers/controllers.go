@@ -39,7 +39,6 @@ func NewControllers(
 	mgr manager.Manager,
 	clk clock.Clock,
 	kubeClient client.Client,
-	apiReader client.Reader,
 	clientSet kubernetes.Interface,
 	recorder events.Recorder,
 	imageProvider image.Provider,
@@ -74,8 +73,8 @@ func NewControllers(
 
 	// Recreates NativePodNetworks that CloudProvider.Create failed to create, which only exist on NPN clusters.
 	if npnProvider.NpnCluster() {
-		controllers = append(controllers, npnrecovery.NewController(clk, kubeClient, apiReader, cloudProvider,
-			instanceProvider, networkProvider, npnProvider))
+		controllers = append(controllers, npnrecovery.NewController(clk, kubeClient, cloudProvider, instanceProvider,
+			networkProvider, npnProvider))
 	}
 
 	return controllers

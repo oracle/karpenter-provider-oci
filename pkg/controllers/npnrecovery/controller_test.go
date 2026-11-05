@@ -31,6 +31,7 @@ import (
 	clocktesting "k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	karpapis "sigs.k8s.io/karpenter/pkg/apis"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
@@ -144,7 +145,7 @@ func newTestEnvWithNodeClass(t *testing.T, sinceLaunch time.Duration, nodeClass 
 	networkProvider := &fakeNetworkProvider{}
 
 	return &testEnv{
-		controller: NewController(clk, kubeClient, kubeClient, &fakes.FakeCloudProvider{},
+		controller: NewController(clk, kubeClient, &fakes.FakeCloudProvider{},
 			&fakeInstanceProvider{}, networkProvider, &fakeNpnProvider{}),
 		client:  kubeClient,
 		network: networkProvider,
@@ -199,6 +200,27 @@ func TestReconcile_LeavesExistingNpnAlone(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, result)
 	// well past the timeout, but the NPN exists, so the nodeclaim must not be touched.
+	assert.True(t, env.nodeClaimExists(t))
+}
+
+func TestReconcile_ToleratesStaleCacheMiss(t *testing.T) {
+	nc := launchedNodeClaim()
+	existing := &npnv1beta1.NativePodNetwork{ObjectMeta: metav1.ObjectMeta{Name: testNpnName}}
+	env := newTestEnv(t, 2*time.Minute, nc, existing)
+	// the cache has not seen the NPN yet, so the Get misses and the Create hits AlreadyExists.
+	env.controller.kubeClient = interceptor.NewClient(env.client.(client.WithWatch), interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object,
+			opts ...client.GetOption) error {
+			if _, isNpn := obj.(*npnv1beta1.NativePodNetwork); isNpn {
+				return apierrors.NewNotFound(schema.GroupResource{Resource: "nativepodnetworks"}, key.Name)
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	})
+
+	result, err := env.controller.Reconcile(context.Background(), nc)
+	require.NoError(t, err)
+	assert.Zero(t, result)
 	assert.True(t, env.nodeClaimExists(t))
 }
 

@@ -87,7 +87,6 @@ func main() {
 			op.Manager,
 			op.Clock,
 			op.GetClient(),
-			op.Manager.GetAPIReader(),
 			op.ClientSet,
 			op.EventRecorder,
 			op.ImageProvider,
