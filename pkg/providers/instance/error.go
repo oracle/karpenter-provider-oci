@@ -25,12 +25,12 @@ func IsNoCapacityError(err error) bool {
 		return true
 	}
 
-	return oci.IsOutOfHostCapacity(err)
+	return oci.IsOutOfHostCapacity(err) || oci.IsCapacityReservationExhausted(err)
 }
 
 // IsSkippableLaunchError returns true for launch failures that should be skipped
-// in favor of trying another shape/offering. Host-capacity exhaustion is always
-// skippable. Service-limit and compartment-quota exhaustion are skippable only
+// in favor of trying another shape/offering. Host-capacity and capacity-reservation
+// exhaustion are always skippable. Service-limit and compartment-quota exhaustion are skippable only
 // when unavailable-offering fallback for service limits is enabled.
 func IsSkippableLaunchError(err error, enableServiceLimitFallback bool) bool {
 	if IsNoCapacityError(err) {

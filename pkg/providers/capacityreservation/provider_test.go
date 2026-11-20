@@ -334,3 +334,104 @@ func TestProvider_listAndFilterCapacityReservations_pagination(t *testing.T) {
 	assert.Equal(t, id1, *items[0].Id)
 	assert.Equal(t, id2, *items[1].Id)
 }
+
+// fakeReservationWithUsedCount returns a fake compute client serving one reservation with two
+// VM.Standard.E5.Flex 16/32 slots, of which *used are taken.
+func fakeReservationWithUsedCount(id string, used *int64) *fakes.FakeCompute {
+	fc := &fakes.FakeCompute{}
+	fc.OnGetComputeCapacityReservation = func(ctx context.Context,
+		req ocicore.GetComputeCapacityReservationRequest) (ocicore.GetComputeCapacityReservationResponse, error) {
+		return ocicore.GetComputeCapacityReservationResponse{
+			ComputeCapacityReservation: ocicore.ComputeCapacityReservation{
+				Id: &id, DisplayName: lo.ToPtr("res"), AvailabilityDomain: lo.ToPtr("ad1"),
+				CompartmentId: lo.ToPtr(compartmentID),
+				InstanceReservationConfigs: []ocicore.InstanceReservationConfig{{
+					InstanceShape: lo.ToPtr("VM.Standard.E5.Flex"),
+					InstanceShapeConfig: &ocicore.InstanceReservationShapeConfigDetails{
+						Ocpus: lo.ToPtr(float32(16)), MemoryInGBs: lo.ToPtr(float32(32)),
+					},
+					ReservedCount: lo.ToPtr(int64(2)),
+					UsedCount:     lo.ToPtr(*used),
+				}},
+			},
+		}, nil
+	}
+	fc.OnListComputeCapacityReservations = func(ctx context.Context,
+		req ocicore.ListComputeCapacityReservationsRequest) (ocicore.ListComputeCapacityReservationsResponse, error) {
+		return ocicore.ListComputeCapacityReservationsResponse{
+			Items: []ocicore.ComputeCapacityReservationSummary{{
+				Id: &id, DisplayName: lo.ToPtr("res"), AvailabilityDomain: lo.ToPtr("ad1"),
+				CompartmentId:  lo.ToPtr(compartmentID),
+				LifecycleState: ocicore.ComputeCapacityReservationLifecycleStateActive,
+			}},
+		}, nil
+	}
+	return fc
+}
+
+func e5FlexAvailability(t *testing.T, provider *DefaultProvider,
+	cfgs []*v1beta1.CapacityReservationConfig) ShapeAvailability {
+	res, err := provider.ResolveCapacityReservations(context.Background(), cfgs)
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	avail := res[0].AvailabilityForShape("VM.Standard.E5.Flex", lo.ToPtr(float32(16)), lo.ToPtr(float32(32)), true)
+	return avail[""]
+}
+
+func TestProvider_ResolveCapacityReservations_keepsUsageOnCacheHit(t *testing.T) {
+	id := "ocid1.capacityreservation.oc1..usage"
+	used := int64(1)
+	provider := fakeProviderWithCompute(fakeReservationWithUsedCount(id, &used))
+	cfgs := []*v1beta1.CapacityReservationConfig{{CapacityReservationId: &id}}
+
+	assert.Equal(t, int64(1), e5FlexAvailability(t, provider, cfgs).Used)
+
+	// Karpenter launched an instance into the reservation; the cached reservation does not know yet.
+	provider.MarkCapacityReservationUsed(&ocicore.Instance{
+		CapacityReservationId: &id,
+		Shape:                 lo.ToPtr("VM.Standard.E5.Flex"),
+		FaultDomain:           lo.ToPtr("FAULT-DOMAIN-1"),
+		ShapeConfig: &ocicore.InstanceShapeConfig{
+			Ocpus: lo.ToPtr(float32(16)), MemoryInGBs: lo.ToPtr(float32(32)),
+		},
+	})
+
+	assert.Equal(t, int64(2), e5FlexAvailability(t, provider, cfgs).Used)
+}
+
+func TestProvider_SyncCapacityReservation_refreshesResolvedAvailability(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  func(id string) *v1beta1.CapacityReservationConfig
+	}{
+		{
+			name: "by id",
+			cfg: func(id string) *v1beta1.CapacityReservationConfig {
+				return &v1beta1.CapacityReservationConfig{CapacityReservationId: &id}
+			},
+		},
+		{
+			name: "by selector",
+			cfg: func(string) *v1beta1.CapacityReservationConfig {
+				return &v1beta1.CapacityReservationConfig{
+					CapacityReservationFilter: &v1beta1.OciResourceSelectorTerm{DisplayName: lo.ToPtr("res")},
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := "ocid1.capacityreservation.oc1..sync"
+			used := int64(1)
+			provider := fakeProviderWithCompute(fakeReservationWithUsedCount(id, &used))
+			cfgs := []*v1beta1.CapacityReservationConfig{tc.cfg(id)}
+
+			assert.Equal(t, int64(1), e5FlexAvailability(t, provider, cfgs).Used)
+
+			// an instance outside the cluster takes the last slot
+			used = 2
+			require.NoError(t, provider.SyncCapacityReservation(context.Background(), id))
+
+			assert.Equal(t, int64(2), e5FlexAvailability(t, provider, cfgs).Used)
+		})
+	}
+}

@@ -115,6 +115,25 @@ func TestIsSkippableLaunchError(t *testing.T) {
 			want:                       true,
 		},
 		{
+			name: "capacity reservation exhausted",
+			err: fakeServiceError{
+				httpStatus: http.StatusBadRequest,
+				code:       "InvalidParameter",
+				message: "Can't place instance because there is no available capacity on the requested " +
+					"Reservation ocid1.capacityreservation.oc1..x for this shape or the reservation is invalid.",
+			},
+			want: true,
+		},
+		{
+			name: "other invalid parameter",
+			err: fakeServiceError{
+				httpStatus: http.StatusBadRequest,
+				code:       "InvalidParameter",
+				message:    "Invalid shape config",
+			},
+			want: false,
+		},
+		{
 			name: "unrelated service error",
 			err: fakeServiceError{
 				httpStatus: http.StatusBadRequest,

@@ -254,6 +254,40 @@ func TestIsOutOfHostCapacity(t *testing.T) {
 	assert.False(t, IsOutOfHostCapacity(stderrs.New("generic")))
 }
 
+func TestIsCapacityReservationExhausted(t *testing.T) {
+	const msg = "Can't place instance because there is no available capacity on the requested " +
+		"Reservation ocid1.capacityreservation.oc1..x for this shape or the reservation is invalid. " +
+		"Please try again with a different reservation."
+
+	assert.False(t, IsCapacityReservationExhausted(nil))
+
+	assert.True(t, IsCapacityReservationExhausted(fakeServiceError{
+		httpStatus: http.StatusBadRequest,
+		code:       InvalidParameter,
+		message:    msg,
+	}))
+	assert.True(t, IsCapacityReservationExhausted(pkgerrors.Wrap(fakeServiceError{
+		httpStatus: http.StatusBadRequest,
+		code:       InvalidParameter,
+		message:    msg,
+	}, "wrapped")))
+	// work-request errors carry only the message
+	assert.True(t, IsCapacityReservationExhausted(stderrs.New(msg)))
+
+	// other InvalidParameter errors are not capacity errors
+	assert.False(t, IsCapacityReservationExhausted(fakeServiceError{
+		httpStatus: http.StatusBadRequest,
+		code:       InvalidParameter,
+		message:    "Invalid shape config",
+	}))
+	assert.False(t, IsCapacityReservationExhausted(fakeServiceError{
+		httpStatus: http.StatusBadRequest,
+		code:       "SomeOtherCode",
+		message:    msg,
+	}))
+	assert.False(t, IsCapacityReservationExhausted(stderrs.New("generic")))
+}
+
 func TestIsServiceLimitExceeded(t *testing.T) {
 	assert.False(t, IsServiceLimitExceeded(nil))
 
