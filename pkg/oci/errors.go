@@ -26,6 +26,15 @@ const (
 	OutOfHostCapacity                   = "Out of host capacity"
 )
 
+// InvalidParameter is the HTTP 400 service-error code LaunchInstance returns when the
+// requested capacity reservation has no free slot for the shape.
+const InvalidParameter = "InvalidParameter"
+
+// capacityReservationExhausted is the lower-cased message fragment of that error, e.g.
+// "Can't place instance because there is no available capacity on the requested Reservation
+// <ocid> for this shape or the reservation is invalid."
+const capacityReservationExhausted = "no available capacity on the requested reservation"
+
 // HTTP 400 service-error codes returned when a launch is blocked by a service
 // limit or compartment quota. These are treated as skippable capacity exhaustion.
 const (
@@ -129,6 +138,23 @@ func IsOutOfHostCapacity(err error) bool {
 	}
 
 	return strings.Contains(err.Error(), OutOfHostCapacity)
+}
+
+// IsCapacityReservationExhausted returns true when a launch into a capacity reservation was
+// rejected because the reservation has no free slot for the shape. The code alone
+// (InvalidParameter) is too broad, so the message is matched as well.
+func IsCapacityReservationExhausted(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	serviceErr, ok := common.IsServiceError(errors.Cause(err))
+	if ok {
+		return serviceErr.GetCode() == InvalidParameter &&
+			strings.Contains(strings.ToLower(serviceErr.GetMessage()), capacityReservationExhausted)
+	}
+
+	return strings.Contains(strings.ToLower(err.Error()), capacityReservationExhausted)
 }
 
 // IsServiceLimitExceeded returns true when the error is an OCI service-limit or

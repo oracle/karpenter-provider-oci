@@ -135,6 +135,9 @@ func (p *DefaultProvider) getUsage(capacityReservationId string) *Usage {
 // SyncCapacityReservation offer ability to evict capacity reservation in case it is out of sync
 func (p *DefaultProvider) SyncCapacityReservation(ctx context.Context, capacityReservationId string) error {
 	p.capResCache.Evict(capacityReservationId)
+	// selector results hold the reservations they loaded, so drop them as well; they are
+	// listed again on the next resolve and pick up the reloaded reservation.
+	p.capResSelectorCache.EvictMatching(func(string) bool { return true })
 	_, err := p.getCapacityReservation(ctx, capacityReservationId)
 	if err != nil {
 		return err
@@ -183,6 +186,7 @@ func (p *DefaultProvider) filterCapacityReservations(ctx context.Context,
 
 //nolint:dupl
 func (p *DefaultProvider) getCapacityReservation(ctx context.Context, ocid string) (*CapResWithLoadTime, error) {
+	loaded := false
 	c, err := p.capResCache.GetOrLoad(ctx, ocid,
 		func(ctx context.Context, s string) (*CapResWithLoadTime, error) {
 			resp, err := p.computeClient.GetComputeCapacityReservation(ctx,
@@ -194,17 +198,20 @@ func (p *DefaultProvider) getCapacityReservation(ctx context.Context, ocid strin
 				return nil, err
 			}
 
+			loaded = true
 			return &CapResWithLoadTime{
 				resp.ComputeCapacityReservation,
 				time.Now(),
 			}, nil
 		})
 
-	if err == nil {
+	if err == nil && loaded {
 		p.mutex.Lock()
 		defer p.mutex.Unlock()
 
-		// reset usage to respect capacity reservation response.
+		// reset usage to respect capacity reservation response. Only do this when the
+		// reservation was just read from the API: on a cache hit the usage recorded since
+		// the last read is still needed to adjust the cached counts.
 		delete(p.usageMap, ocid)
 	}
 

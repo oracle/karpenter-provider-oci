@@ -210,6 +210,16 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *corev1.NodeClaim)
 				i, launchErr := c.instanceProvider.LaunchInstance(ctx, nodeClaim, nodeClass,
 					instanceType, imageResolveResult, networkResolveResult, kmsKeyResolveResult, proposal)
 				if launchErr != nil {
+					// The cached reservation still counts the slot as free (for example, an instance
+					// outside the cluster took it), so the next scheduling round would pick the same
+					// reservation again. Reload it so its reserved offering reflects the real usage.
+					if proposal.CapacityReservationId != nil && oci.IsCapacityReservationExhausted(launchErr) {
+						if syncErr := c.capacityReservationProvider.SyncCapacityReservation(ctx,
+							*proposal.CapacityReservationId); syncErr != nil {
+							lg.Error(syncErr, "cannot refresh capacity reservation",
+								"capacityReservationId", *proposal.CapacityReservationId)
+						}
+					}
 					return launchErr
 				}
 
@@ -219,8 +229,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *corev1.NodeClaim)
 
 		if err != nil {
 			lg.Error(err, "cannot launch instance")
-			// TODO in capacity reservation case, what error will we get if there is no capacity?
-			// Host-capacity shortage is always skippable. Service-limit/compartment-quota
+			// Host-capacity and capacity-reservation shortage are always skippable. Service-limit/compartment-quota
 			// failures are skippable only when the service-limit fallback gate is enabled.
 			if instance.IsSkippableLaunchError(err, c.enableServiceLimitFallback) {
 				skipErr = err

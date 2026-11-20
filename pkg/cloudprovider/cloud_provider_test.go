@@ -1079,6 +1079,58 @@ var _ = Describe("CloudProvider Unit Tests", func() {
 			Expect(createErr.ConditionReason).To(Equal("LaunchInstanceFailed"))
 		})
 
+		It("should return insufficient capacity and refresh the reservation when it has no capacity left", func() {
+			reservationID := "ocid1.capacityreservation.oc1..exhausted"
+			for _, tc := range []struct {
+				name          string
+				reservationID *string
+				wantSynced    []string
+			}{
+				{name: "reservation proposal", reservationID: &reservationID, wantSynced: []string{reservationID}},
+				{name: "on-demand proposal", reservationID: nil, wantSynced: nil},
+			} {
+				By(tc.name)
+				var synced []string
+				cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
+					kubeClient:    kubeClient,
+					instanceTypes: []*instancetype.OciInstanceType{instanceA},
+					imageProvider: &FakeImageProvider{
+						ResolveImageForShapeFn: func(_ context.Context, _ *v1beta1.ImageConfig,
+							_ string) (*image.ImageResolveResult, error) {
+							return imageResult, nil
+						},
+					},
+					placementProvider: &FakePlacementProvider{
+						PlaceInstanceFn: func(_ context.Context, _ *v1.NodeClaim, _ *v1beta1.OCINodeClass,
+							_ *instancetype.OciInstanceType, placeFunc func(*placement.Proposal) error) error {
+							return placeFunc(&placement.Proposal{CapacityReservationId: tc.reservationID})
+						},
+					},
+					capacityReservationProvider: &FakeCapacityReservationProvider{
+						SyncFn: func(_ context.Context, id string) error {
+							synced = append(synced, id)
+							return nil
+						},
+					},
+					instanceProvider: &FakeInstanceProvider{
+						LaunchInstanceFn: func(_ context.Context, _ *v1.NodeClaim, _ *v1beta1.OCINodeClass,
+							_ *instancetype.OciInstanceType, _ *image.ImageResolveResult, _ *network.NetworkResolveResult,
+							_ *kms.KmsKeyResolveResult, _ *placement.Proposal) (*instance.InstanceInfo, error) {
+							return nil, fakeServiceError{statusCode: 400, code: "InvalidParameter",
+								message: "Can't place instance because there is no available capacity on the " +
+									"requested Reservation " + reservationID + " for this shape or the reservation is invalid."}
+						},
+					},
+				})
+
+				_, err := cp.Create(ctx, nodeClaim)
+				Expect(cloudprovider.IsInsufficientCapacityError(err)).To(BeTrue())
+				var createErr *cloudprovider.CreateError
+				Expect(errors.As(err, &createErr)).To(BeFalse())
+				Expect(synced).To(Equal(tc.wantSynced))
+			}
+		})
+
 		It("should return insufficient capacity when all instance types are out of host capacity", func() {
 			launchCount := 0
 			cp := newUnitTestCloudProvider(unitTestCloudProviderOptions{
