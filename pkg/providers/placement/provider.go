@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
+	"github.com/oracle/karpenter-provider-oci/pkg/oci"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/capacityreservation"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/clusterplacementgroup"
 	"github.com/oracle/karpenter-provider-oci/pkg/providers/computecluster"
@@ -148,6 +149,14 @@ func (p *DefaultProvider) PlaceInstance(ctx context.Context,
 		}()
 
 		if err != nil {
+			// A 429 throttling error is scoped to the tenancy, not to this
+			// proposal's AD, so trying the remaining proposals cannot
+			// succeed; it only adds more calls against the same throttle.
+			// Return at once and let Karpenter core requeue the NodeClaim
+			// with backoff.
+			if oci.IsTooManyRequests(err) {
+				return err
+			}
 			if len(proposals) > 1 {
 				// drop last proposal and try next
 				proposals = proposals[1:]

@@ -166,3 +166,20 @@ func IsQuotaExceeded(err error) bool {
 
 	return serviceErr.GetCode() == QuotaExceeded
 }
+
+// IsTooManyRequests returns true when the error is an OCI throttling failure
+// (HTTP 429 TooManyRequests). Throttling applies to the tenancy/user rather
+// than to a specific availability domain, so retrying the same call against
+// another AD cannot succeed and only adds load against the same throttle.
+func IsTooManyRequests(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	serviceErr, ok := common.IsServiceError(errors.Cause(err))
+	if !ok {
+		return false
+	}
+
+	return serviceErr.GetHTTPStatusCode() == http.StatusTooManyRequests
+}
