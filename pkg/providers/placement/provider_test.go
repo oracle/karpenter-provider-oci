@@ -9,6 +9,8 @@ package placement
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"testing"
 
 	ociv1beta1 "github.com/oracle/karpenter-provider-oci/pkg/apis/v1beta1"
@@ -157,4 +159,119 @@ func TestProvider_PlaceInstance_PassesNodeClaimFaultDomainRequirement(t *testing
 
 	assert.NoError(t, err)
 	assert.True(t, placeFuncCalled)
+}
+
+// fakeServiceError implements the OCI SDK common.ServiceError interface so tests
+// can exercise error classification without a live API.
+type fakeServiceError struct {
+	httpStatus int
+	code       string
+	message    string
+}
+
+func (e fakeServiceError) Error() string           { return e.message }
+func (e fakeServiceError) GetHTTPStatusCode() int  { return e.httpStatus }
+func (e fakeServiceError) GetMessage() string      { return e.message }
+func (e fakeServiceError) GetCode() string         { return e.code }
+func (e fakeServiceError) GetOpcRequestID() string { return "" }
+
+// newMultiAdPlacementFixture builds a provider and an instance type with one
+// available offering in each of three ADs, so PlaceInstance has three
+// proposals to fan out across.
+func newMultiAdPlacementFixture(t *testing.T) (*DefaultProvider, *corev1.NodeClaim, *instancetype.OciInstanceType) {
+	t.Helper()
+	ctx := context.Background()
+	fakeCompute := &fakes.FakeCompute{}
+	fakeIdentity := fakes.NewFakeIdentity()
+	capResProvider := capacityreservation.NewProvider(ctx, fakeCompute, "ocid1.compartment.oc1..cluster123")
+	identityProvider, err := identity.NewProvider(ctx, "ocid1.compartment.oc1..cluster123", fakeIdentity)
+	assert.NoError(t, err)
+
+	provider := &DefaultProvider{
+		instancesByNodePool:         make(map[string]*adFdSummary),
+		capacityReservationProvider: capResProvider,
+		identityProvider:            identityProvider,
+	}
+
+	offerings := lo.Map([]string{"ad-1", "ad-2", "ad-3"}, func(zone string, _ int) *cloudprovider.Offering {
+		return &cloudprovider.Offering{
+			Requirements: scheduling.NewRequirements(
+				scheduling.NewRequirement(corev1.CapacityTypeLabelKey, v1.NodeSelectorOpIn, corev1.CapacityTypeOnDemand),
+				scheduling.NewRequirement(v1.LabelTopologyZone, v1.NodeSelectorOpIn, zone),
+				scheduling.NewRequirement(cloudprovider.ReservationIDLabel, v1.NodeSelectorOpDoesNotExist),
+			),
+			Price:     0.1,
+			Available: true,
+		}
+	})
+	instanceType := &instancetype.OciInstanceType{
+		Shape: "VM.Standard2.1",
+		InstanceType: cloudprovider.InstanceType{
+			Offerings: offerings,
+		},
+	}
+	claim := &corev1.NodeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-claim",
+			Labels: map[string]string{
+				corev1.NodePoolLabelKey: "nodepool1",
+			},
+		},
+	}
+	return provider, claim, instanceType
+}
+
+func TestProvider_PlaceInstance_TooManyRequestsStopsFanOut(t *testing.T) {
+	provider, claim, instanceType := newMultiAdPlacementFixture(t)
+	ctx := context.Background()
+
+	throttled := fakeServiceError{
+		httpStatus: http.StatusTooManyRequests,
+		code:       "TooManyRequests",
+		message:    "Too many requests for the user",
+	}
+
+	calls := 0
+	err := provider.PlaceInstance(ctx, claim, &ociv1beta1.OCINodeClass{}, instanceType, func(proposal *Proposal) error {
+		calls++
+		return throttled
+	})
+
+	// A 429 applies to the tenancy, not to one AD: the error must surface
+	// after the first attempt so the caller can back off, instead of
+	// fanning out to the remaining ADs against the same throttle.
+	assert.Equal(t, error(throttled), err)
+	assert.Equal(t, 1, calls)
+}
+
+func TestProvider_PlaceInstance_NonThrottlingErrorStillFansOut(t *testing.T) {
+	provider, claim, instanceType := newMultiAdPlacementFixture(t)
+	ctx := context.Background()
+
+	calls := 0
+	err := provider.PlaceInstance(ctx, claim, &ociv1beta1.OCINodeClass{}, instanceType, func(proposal *Proposal) error {
+		calls++
+		if calls == 1 {
+			return errors.New("launch failed in this AD")
+		}
+		return nil
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, 2, calls)
+}
+
+func TestProvider_PlaceInstance_NonThrottlingErrorExhaustsProposals(t *testing.T) {
+	provider, claim, instanceType := newMultiAdPlacementFixture(t)
+	ctx := context.Background()
+
+	launchErr := errors.New("launch failed in this AD")
+	calls := 0
+	err := provider.PlaceInstance(ctx, claim, &ociv1beta1.OCINodeClass{}, instanceType, func(proposal *Proposal) error {
+		calls++
+		return launchErr
+	})
+
+	assert.Equal(t, launchErr, err)
+	assert.Equal(t, 3, calls)
 }

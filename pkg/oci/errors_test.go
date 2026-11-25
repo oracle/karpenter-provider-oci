@@ -283,3 +283,33 @@ func TestIsServiceLimitExceeded(t *testing.T) {
 
 	assert.False(t, IsServiceLimitExceeded(stderrs.New("generic")))
 }
+
+func TestIsTooManyRequests(t *testing.T) {
+	assert.False(t, IsTooManyRequests(nil))
+
+	assert.True(t, IsTooManyRequests(fakeServiceError{
+		httpStatus: http.StatusTooManyRequests,
+		code:       "TooManyRequests",
+		message:    "Too many requests for the user",
+	}))
+
+	assert.True(t, IsTooManyRequests(pkgerrors.Wrap(fakeServiceError{
+		httpStatus: http.StatusTooManyRequests,
+		code:       "TooManyRequests",
+		message:    "Too many requests for the user",
+	}, "wrapped")))
+
+	assert.False(t, IsTooManyRequests(fakeServiceError{
+		httpStatus: http.StatusBadRequest,
+		code:       LimitExceeded,
+		message:    "service limit exceeded",
+	}))
+
+	assert.False(t, IsTooManyRequests(fakeServiceError{
+		httpStatus: http.StatusInternalServerError,
+		code:       "InternalError",
+		message:    "Out of host capacity.",
+	}))
+
+	assert.False(t, IsTooManyRequests(stderrs.New("generic")))
+}
